@@ -43,6 +43,15 @@ export const Story = {
     if (q.giveItem) G.game.addItem(q.giveItem);
     UI.dirtyQuests = true; this.markT = 0; G.game.save();
     if (q.id === 'q5') await this.scionsScene();
+    await this.syncAttune();
+  },
+  // 先共鸣、后接任务时，「与以太之光共鸣」这一步视为已完成
+  async syncAttune() {
+    const st = Q().q2;
+    if (G.save.attuned.limsa && st && st.status === 'active' && st.step === 0) {
+      UI.chat('你已经与以太之光「利姆萨·罗敏萨」共鸣过了。', 'quest');
+      await this.advance(QUESTS.q2);
+    }
   },
   async advance(q) {
     const st = Q()[q.id]; st.step++; st.count = 0; UI.dirtyQuests = true; this.markT = 0;
@@ -142,7 +151,7 @@ export const Story = {
   },
   async interactObj(it) {
     const A = G.save.attuned;
-    if (it.id === 'aetheryte') { if (!A.limsa) await this.attuneScene(); else UI.toggle('map'); return; }
+    if (it.id === 'aetheryte') { if (!A.limsa) await this.attuneScene(); else if (Q().q2 && Q().q2.status === 'active' && Q().q2.step === 0) await this.syncAttune(); else UI.toggle('map'); return; }
     if (it.id === 'aetheryte2') {
       if (!A.summerford) { A.summerford = true; G.player.model.play('attune', 2); VFX.teleport(G.player); Audio.sfxPlay('teleport'); UI.banner('duty', '以太之晶「盛夏农庄」', 'AETHERYTE ATTUNED'); UI.chat('与以太之晶「盛夏农庄」共鸣了！', 'system'); G.game.save(); }
       else UI.toggle('map'); return;
@@ -215,6 +224,7 @@ export const Story = {
     if (Z.dungeon) { UI.banner('duty', '任务开始', 'DUTY COMMENCED'); Audio.sfxPlay('duty'); UI.chat('「天然要害沙斯塔夏溶洞」任务开始。时间限制60分钟。', 'system'); UI.chat('提示：跟随队友深入溶洞，击败三名头目。靠近敌人或攻击即可开战。', 'quest'); }
     if (Z.id === 'field' && !G.save.flags.fieldHint) { G.save.flags.fieldHint = true; UI.chat('提示：黄色名字的魔物不会主动攻击，红色的会。按 Tab 选择目标后使用技能。', 'quest'); }
     if (opts.fromDuty) { UI.chat('提示：去溺水海豚亭与雅·修特拉交谈。', 'quest'); }
+    await this.syncAttune();
   },
   // ---------- 过场动画 ----------
   csBegin() { G.cutscene = true; G.state = 'cutscene'; G.csSkip = false; UI.letterbox(true); $('hud').hidden = true; UI.prompt(null); for (const w of Object.keys(UI.win)) UI.closeWin(w); },
