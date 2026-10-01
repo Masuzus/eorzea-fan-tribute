@@ -35,23 +35,41 @@
 | Enter | 聊天输入 |
 | Esc | 取消目标 / 关闭窗口 / 跳过过场动画 |
 
-## 本地运行
+## 构建
 
-项目使用浏览器原生 ES 模块，需要通过 HTTP 服务打开（直接双击 `index.html` 无法加载模块）：
+与 [claude-opus-5-5-demo](https://github.com/riba2534/claude-opus-5-5-demo) 相同的方案：esbuild 把 `js/` 下的全部模块连同 three.js 打包，内联进单个 `dist/index.html`。产物约 1 MB，运行时不依赖 CDN（仅界面字体来自 Google Fonts，加载失败会回退到系统字体），可以直接用浏览器打开。
 
 ```bash
-# 任选其一
-npx serve .
-python -m http.server 8000
+npm install
+npm run build        # 输出 dist/index.html（压缩）
+npm run build:dev    # 不压缩，便于调试
 ```
 
-然后访问 `http://localhost:8000`（或对应端口）。three.js r160 通过 jsDelivr CDN 加载，需要联网。
+## 部署到 Cloudflare Pages
+
+使用 wrangler 直接上传 `dist/`，配置见 `wrangler.jsonc`（项目名 `eorzea-fan-tribute`）。
+
+```bash
+npx wrangler login   # 首次使用需要登录 Cloudflare
+npm run deploy       # 构建并部署
+npm run preview      # 本地用 Cloudflare 运行时预览
+```
+
+## 不构建直接运行
+
+根目录的 `index.html` 也可以直接作为开发版使用：它通过 importmap 从 jsDelivr 加载 three.js r160（需要联网），并且要用 HTTP 服务打开（直接双击无法加载 ES 模块）：
+
+```bash
+npx serve .          # 或 python -m http.server 8000
+```
 
 ## 代码结构
 
 | 文件 | 说明 |
 | --- | --- |
-| `index.html` | 页面结构与全部界面样式 |
+| `index.html` | 页面结构与全部界面样式（开发版入口，也是构建模板） |
+| `build.mjs` | esbuild 构建脚本，生成单文件 `dist/index.html` |
+| `wrangler.jsonc` | Cloudflare Pages 部署配置 |
 | `js/main.js` | 主循环、标题与角色创建、地图加载、玩家控制、镜头、输入、存档 |
 | `js/engine.js` | 渲染器、后期辉光、天空与海面着色器、粒子、静态合批、程序化贴图 |
 | `js/character.js` | 人形骨架、捏脸贴图、发型、装备与武器、动作；魔物与陆行鸟模型 |

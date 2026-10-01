@@ -1,0 +1,20 @@
+{
+  "name": "eorzea-fan-tribute",
+  "version": "1.0.0",
+  "description": "浏览器 3D 同人游戏，致敬《最终幻想XIV》",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:dev": "node build.mjs --dev",
+    "preview": "npm run build && wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.0",
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
