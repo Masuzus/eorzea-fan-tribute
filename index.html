@@ -47,6 +47,8 @@ button { font-family: inherit; }
 .menu button:hover, .menu button:focus-visible { color: #fff; text-shadow: 0 0 14px rgba(120,190,255,.9), 0 2px 6px #000; outline: none; }
 .menu button:hover::before, .menu button:hover::after { width: 60px; }
 .menu button:disabled { opacity: .35; cursor: default; }
+.menu button small { display: block; font-family: var(--f-body); font-size: 12px; letter-spacing: .12em; color: #9fc6ff; margin-top: 2px; }
+.menu button small:empty { display: none; }
 .disclaimer { position: absolute; bottom: 14px; left: 16px; right: 16px; text-align: center; font-size: 11px; color: rgba(220, 215, 200, 0.55); letter-spacing: .05em; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } }
 
@@ -79,8 +81,29 @@ button { font-family: inherit; }
 .text-in { pointer-events: auto; width: 100%; padding: 8px 10px; background: rgba(0,0,0,.35); border: 1px solid var(--line); border-radius: 4px; color: #fff; font-size: 14px; font-family: inherit; }
 .text-in:focus { outline: 1px solid var(--blue); }
 select.text-in { font-size: 13px; }
-#creator .cbar { pointer-events: auto; position: absolute; left: 16px; right: 16px; bottom: 16px; display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
-#creator .cbar .grp { display: flex; gap: 8px; flex-wrap: wrap; }
+#creator .cbar, #charsel .cbar { pointer-events: auto; position: absolute; left: 16px; right: 16px; bottom: 16px; display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+#creator .cbar .grp, #charsel .cbar .grp { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn.danger { background: linear-gradient(180deg, #8a3a32, #52201c); border-color: rgba(255, 130, 110, 0.55); }
+/* 角色选择 */
+#charsel { position: absolute; inset: 0; pointer-events: none; }
+#charsel .cs-list { pointer-events: auto; position: absolute; right: 16px; top: 16px; bottom: 76px; width: 340px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; }
+.cs-head { padding: 14px 18px 10px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cs-head h2 { margin: 0; font-family: var(--f-display); font-size: 20px; color: var(--gold); letter-spacing: .15em; }
+.cs-head span { color: var(--muted); font-size: 12px; }
+.cs-items { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.cs-card { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; cursor: pointer; padding: 8px 10px; border-radius: 5px; border: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.25); color: var(--text); font: inherit; transition: border-color .15s, background .15s; }
+.cs-card:hover { border-color: rgba(230,201,130,.45); }
+.cs-card.on { border-color: rgba(120,180,255,.85); background: linear-gradient(90deg, rgba(58,106,168,.5), rgba(31,58,100,.2)); }
+.cs-card img { width: 40px; height: 40px; border-radius: 6px; flex: none; }
+.cs-card .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cs-card .nm b { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-card .nm small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-card .lp { color: var(--muted); font-size: 11px; flex: none; align-self: flex-start; font-variant-numeric: tabular-nums; }
+.cs-empty { border: 1px dashed rgba(255,255,255,.14); border-radius: 5px; padding: 11px; color: var(--muted); font-size: 12px; text-align: center; }
+#charsel .cs-title { position: absolute; left: 24px; top: 20px; pointer-events: none; max-width: calc(100vw - 400px); }
+#charsel .cs-title .rn { font-family: var(--f-display); font-size: 34px; color: #fff; text-shadow: 0 2px 10px #000; letter-spacing: .1em; }
+#charsel .cs-title .re { font-family: var(--f-latin); letter-spacing: .3em; color: var(--gold); font-size: 13px; margin-top: 2px; }
+#charsel .cs-title .rc { color: #d8d2c4; margin-top: 8px; font-size: 13px; line-height: 1.8; text-shadow: 0 1px 4px #000; }
 #creator .ctitle { position: absolute; right: 24px; top: 20px; text-align: right; pointer-events: none; }
 #creator .ctitle .rn { font-family: var(--f-display); font-size: 34px; color: #fff; text-shadow: 0 2px 10px #000; letter-spacing: .1em; }
 #creator .ctitle .re { font-family: var(--f-latin); letter-spacing: .4em; color: var(--gold); font-size: 13px; }
@@ -324,6 +347,9 @@ select.text-in { font-size: 13px; }
   #creator .cpanel { top: auto; bottom: 120px; height: 46vh; width: auto; right: 16px; }
   #creator .ctitle { top: 12px; right: 16px; }
   #creator .ctitle .rn { font-size: 24px; }
+  #charsel .cs-list { top: auto; bottom: 120px; height: 40vh; width: auto; left: 16px; }
+  #charsel .cs-title { top: 12px; left: 16px; max-width: calc(100vw - 32px); }
+  #charsel .cs-title .rn { font-size: 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .logo, .menu, .bn, .zt, .np .qi, .fly { animation-duration: .01s !important; } }
 </style>
@@ -392,12 +418,22 @@ select.text-in { font-size: 13px; }
     </div>
     <div class="menu">
       <button id="btn-new">开始新的冒险</button>
-      <button id="btn-continue" disabled>继续冒险</button>
+      <button id="btn-continue" disabled>继续冒险<small id="cont-sub"></small></button>
+      <button id="btn-chars" disabled>选择角色</button>
       <button id="btn-help">操作说明</button>
       <button id="btn-sound">音乐：开</button>
       <button id="btn-fullscreen" hidden>全屏：关</button>
     </div>
     <div class="disclaimer">非官方粉丝致敬作品 · 与 SQUARE ENIX 无任何关联 · 全部模型、贴图与音乐均为程序实时生成</div>
+  </div>
+
+  <div id="charsel" hidden>
+    <div class="cs-title"><div class="rn" id="cs-name"></div><div class="re" id="cs-en"></div><div class="rc" id="cs-desc"></div></div>
+    <div class="cs-list panel"><div class="cs-head"><h2>选择角色</h2><span id="cs-count"></span></div><div class="cs-items" id="cs-items"></div></div>
+    <div class="cbar">
+      <div class="grp"><button class="btn ghost" id="cs-back">返回标题</button><button class="btn ghost" id="cs-del">删除角色</button></div>
+      <div class="grp"><button class="btn ghost" id="cs-new">新建角色</button><button class="btn primary" id="cs-play">开始游戏</button></div>
+    </div>
   </div>
 
   <div id="creator" hidden>

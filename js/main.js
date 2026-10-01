@@ -6,14 +6,15 @@ import { JOBS, GENERAL, EMOTES, RACES, SKINS, HAIR_COLORS, EYE_COLORS, PAINT_COL
 import { buildZone, aetheryte, rockVariant } from './zones.js';
 import { VFX } from './vfx.js';
 import { Combat, Entity, bossScript } from './combat.js';
-import { UI } from './ui.js';
+import { UI, jobIcon } from './ui.js';
 import { Story } from './story.js';
 import { Net } from './net.js';
 import { Online } from './online.js';
+import { Saves, MAX_CHARS } from './saves.js';
 
 const $ = (id) => document.getElementById(id);
 const PI = Math.PI;
-const SAVE_KEY = 'eorzea-fan-save-v1', SET_KEY = 'eorzea-fan-settings-v1';
+const SET_KEY = 'eorzea-fan-settings-v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const V3 = THREE.Vector3;
 
@@ -21,7 +22,7 @@ window.__eorzea = G; G.debug = { Combat, JOBS, QUESTS, Story, UI, Net, Online };
 G.ui = UI; G.cam ={ yaw: PI, pitch: 0.32, dist: 7, tdist: 7, target: new V3() };
 G.input = { keys: {}, drag: null, joy: null, bothDown: false };
 G.tweens = [];
-let last = performance.now(), saveT = 0, targetRing = null, chocobo = null, titleGroup = null, creator = null;
+let last = performance.now(), saveT = 0, targetRing = null, chocobo = null, titleGroup = null, creator = null, charsel = null;
 
 // =====================================================================
 // 通用 API（供剧情与界面使用）
@@ -38,7 +39,7 @@ const game = G.game = {
     const S = G.save; if (!S) return;
     if (G.zone && !G.zone.dungeon && G.player) { S.zone = G.zone.id; S.pos = [G.player.pos.x, G.player.pos.z, G.player.rot]; }
     S.hp = G.player ? G.player.hp : null;
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* 存储不可用时忽略 */ }
+    if (G.slot) Saves.write(G.slot, S);
   },
   saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(G.settings)); } catch (e) { } },
   setTarget(e) { const P = G.player; if (!P) return; if (e === P.target) return; P.target = e; if (e) Audio.sfxPlay('click', 0.4); },
@@ -113,6 +114,7 @@ const game = G.game = {
   queueDuty() { Story.queueDuty(); },
   objectiveMarkers() { return Story.markers(); },
   toTitle() { game.save(); showTitle(); },
+  toCharSelect() { game.save(); showCharSelect(G.slot); },
   loadZone: (...a) => loadZone(...a),
   spawnMob: (...a) => spawnMob(...a), spawnAlly: (...a) => spawnAlly(...a), removeEntity: (e) => removeEntity(e), addEntity: (e) => addEntity(e),
   // 联机失败时改为本地生成魔物 / 副本
@@ -129,8 +131,6 @@ const game = G.game = {
 // 启动
 // =====================================================================
 function loadSettings() { try { const s = JSON.parse(localStorage.getItem(SET_KEY) || 'null'); if (s) Object.assign(G.settings, s); } catch (e) { } }
-function hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; } }
-function readSave() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; } }
 
 initEngine($('gl'));
 UI.init(); loadSettings(); setupInput();
@@ -158,6 +158,7 @@ function clearWorld() {
   if (G.zone) { G.scene.remove(G.zone.group); disposeGroup(G.zone.group); G.zone = null; }
   if (titleGroup) { G.scene.remove(titleGroup); disposeGroup(titleGroup); titleGroup = null; }
   if (creator) { G.scene.remove(creator.group); creator.preview.dispose(); disposeGroup(creator.group); creator = null; }
+  if (charsel) { G.scene.remove(charsel.group); if (charsel.preview) charsel.preview.dispose(); disposeGroup(charsel.group); charsel = null; }
   if (targetRing) { G.scene.remove(targetRing); }
   G.waters = []; G.fate = null; G.duty = null; UI.fateInfo(null); UI.dutyInfo(null);
 }
@@ -215,13 +216,21 @@ function spawnMob(kind, level, x, z, o = {}) {
 }
 
 // ---------- 标题画面 ----------
-function showTitle() {
-  G.state = 'title'; G.cutscene = false; G.csSkip = false; Net.leave(); clearWorld();
+// 离开游戏世界（回到标题或角色选择）
+function leaveWorld(state) {
+  G.state = state; G.cutscene = false; G.csSkip = false; Net.leave(); clearWorld();
   if (G.player) { G.player.model.dispose(); G.player = null; G.entities = []; }
-  chocobo = null;
-  $('title').hidden = false; $('hud').hidden = true; $('creator').hidden = true; $('dialog').hidden = true; UI.letterbox(false); UI.loading(false);
+  chocobo = null; G.slot = null;
+  for (const id of ['title', 'hud', 'creator', 'charsel', 'dialog']) $(id).hidden = true;
+  UI.letterbox(false); UI.loading(false);
   document.querySelectorAll('#windows .win').forEach((w) => w.remove()); UI.win = {};
-  $('btn-continue').disabled = !hasSave();
+}
+function showTitle() {
+  leaveWorld('title');
+  $('title').hidden = false;
+  const lastChar = Saves.last();
+  $('btn-continue').disabled = !lastChar; $('btn-chars').disabled = !lastChar;
+  $('cont-sub').textContent = lastChar ? `${lastChar.name} · ${JOBS[lastChar.job] ? JOBS[lastChar.job].name : ''} Lv${lastChar.lv}` : '';
   titleGroup = new THREE.Group(); G.scene.add(titleGroup);
   setEnvironment({ top: '#040914', horizon: '#18305a', bottom: '#02040a', sunDir: [0.3, 0.15, -1], sunColor: '#5a7aff', clouds: 0.35, stars: 1.2, fog: ['#0a1830', 40, 220], hemiSky: '#5a7ac8', hemiGround: '#0a0a14', hemiInt: 0.7, sunInt: 0.8, sunLight: '#8aa8ff', exposure: 1.1, bloom: 1.0 });
   const ae = aetheryte(titleGroup, 0, -2, 0, true); titleGroup.userData.ae = ae;
@@ -233,24 +242,32 @@ function updateTitle(dt) {
   const t = G.time * 0.06; G.camera.position.set(Math.cos(t) * 22, 5 + Math.sin(G.time * 0.2) * 1.5, Math.sin(t) * 22); G.camera.lookAt(0, 6, 0); if (innerWidth > 800) G.camera.translateX(-7);
   if (titleGroup) { titleGroup.userData.ae.update(dt); titleGroup.children.forEach((m) => { if (m.userData.bob !== undefined) { m.position.y += Math.sin(G.time + m.userData.bob) * dt * 0.3; m.rotation.y += dt * 0.05; } }); }
 }
-$('btn-new').onclick = () => { Audio.init(); Audio.sfxPlay('confirm'); showCreator(); };
-$('btn-continue').onclick = () => { Audio.init(); Audio.sfxPlay('confirm'); const s = readSave(); if (!s) return; G.save = s; normalizeSave(s); startWorld(s.zone || 'town', null, { resume: true }); };
+$('btn-new').onclick = () => { Audio.init(); Audio.sfxPlay('confirm'); newCharacter('title'); };
+$('btn-continue').onclick = () => { Audio.init(); Audio.sfxPlay('confirm'); const c = Saves.last(); if (c) playCharacter(c.id); };
+$('btn-chars').onclick = () => { Audio.init(); Audio.sfxPlay('confirm'); showCharSelect(); };
 $('btn-help').onclick = () => { Audio.init(); UI.winHelp(); };
 $('btn-sound').onclick = () => { Audio.init(); const on = G.settings.music > 0; G.settings.music = on ? 0 : 0.5; Audio.setVolumes(G.settings.music, G.settings.sfx); $('btn-sound').textContent = on ? '音乐：关' : '音乐：开'; game.saveSettings(); };
 $('btn-sound').textContent = G.settings.music > 0 ? '音乐：开' : '音乐：关';
 function normalizeSave(s) { s.inv = s.inv || {}; s.gear = s.gear || {}; s.quests = s.quests || {}; s.flags = s.flags || {}; s.emotes = s.emotes || []; s.attuned = s.attuned || {}; s.stats = s.stats || { kills: 0, deaths: 0, start: Date.now() }; s.weaponTier = s.weaponTier || 0; }
 
-// ---------- 角色创建 ----------
-const NAMES1 = ['艾莉丝', '露娜', '卡尔', '希尔达', '雷恩', '米娅', '奥斯卡', '诺拉', '赛勒斯', '菲奥娜', '莱昂', '缇娜', '伊恩', '索菲'], NAMES2 = ['温德', '斯塔林', '月影', '星语', '布莱克', '海风', '银翼', '晨光', '白鸥', '霜语'];
-function randomName() { return `${pick(NAMES1)}·${pick(NAMES2)}`; }
-function randomApp(race) {
-  race = race || pick(RACES).id; const clan = Math.random() < 0.5 ? 0 : 1;
-  const g = race === 'hrothgar' ? 'm' : race === 'viera' ? 'f' : Math.random() < 0.5 ? 'm' : 'f';
-  return { clan, app: { ...DEFAULT_APP, race, gender: g, skin: pick(SKINS[race][clan]), hairStyle: Math.floor(rand(0, 8)), hairColor: pick(HAIR_COLORS), eyeColor: pick(EYE_COLORS), height: rand(0.2, 0.8), build: rand(0.2, 0.8), eyeShape: Math.floor(rand(0, 3)), brows: Math.floor(rand(0, 3)), mouth: Math.floor(rand(0, 3)), facePaint: Math.random() < 0.5 ? 0 : Math.floor(rand(1, 6)), paintColor: pick(PAINT_COLORS), scaleColor: pick(SCALE_COLORS), feature: rand(0.3, 0.8) } };
+// ---------- 角色选择 ----------
+const ZONE_NAMES = { town: '利姆萨·罗敏萨', field: '拉诺西亚低地', dungeon: '天然要害沙斯塔夏溶洞' };
+const fmtDate = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const escHTML = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function playCharacter(id) {
+  const s = Saves.read(id); if (!s || !s.name) { UI.error('存档损坏，无法读取'); return; }
+  normalizeSave(s); G.save = s; G.slot = id; Saves.write(id, s); // 记为最近游玩
+  startWorld(s.zone || 'town', null, { resume: true });
 }
-function showCreator() {
-  clearWorld(); G.state = 'creator';
-  $('title').hidden = true; $('creator').hidden = false;
+async function newCharacter(from) {
+  if (Saves.count() >= MAX_CHARS) {
+    await UI.modal('full', '角色已满', `<p style="margin:0;line-height:1.8">最多可以创建 ${MAX_CHARS} 个角色。<br>请先在「选择角色」中删除不需要的角色。</p>`, [{ text: '知道了', primary: true }]);
+    return;
+  }
+  showCreator(from);
+}
+// 创建角色时用到的舞台：地台、光环、背景与灯光
+function makeStage() {
   const grp = new THREE.Group(); G.scene.add(grp);
   setEnvironment({ sky: false, top: '#000', horizon: '#000', fog: ['#0a1020', 10, 40], hemiSky: '#9ab8e8', hemiGround: '#4a3a4a', hemiInt: 1.0, sunInt: 2.2, sunLight: '#fff4e8', sunDir: [0.4, 0.8, 0.9], exposure: 0.95, bloom: 0.28 });
   const floor = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.3, 0.3, 64), new THREE.MeshStandardMaterial({ color: '#1c1e28', roughness: 0.4, metalness: 0.4 })); floor.position.y = -0.15; floor.receiveShadow = true; grp.add(floor);
@@ -260,6 +277,83 @@ function showCreator() {
   const rim = new THREE.PointLight('#5a9aff', 25, 12, 1.5); rim.position.set(-2, 3, -3); grp.add(rim);
   const warm = new THREE.PointLight('#ffb070', 10, 10, 1.5); warm.position.set(2.5, 1.5, 2); grp.add(warm);
   const fill = new THREE.PointLight('#fff4ea', 3.5, 14, 1.2); fill.position.set(-0.6, 1.7, 3.2); grp.add(fill);
+  return { group: grp, ring };
+}
+function showCharSelect(selId) {
+  if (!Saves.count()) { showTitle(); return; }
+  leaveWorld('charsel');
+  $('charsel').hidden = false;
+  charsel = { ...makeStage(), preview: null, rotY: 0.35, sel: null, idleT: 4 };
+  renderCharList();
+  const first = (selId && Saves.list().find((c) => c.id === selId)) || Saves.last();
+  selectChar(first.id, true);
+  Audio.play('title');
+}
+function renderCharList() {
+  const list = Saves.list(), box = $('cs-items');
+  $('cs-count').textContent = `${list.length} / ${MAX_CHARS}`;
+  box.innerHTML = list.map((c) => {
+    const job = JOBS[c.job] || JOBS.gla;
+    return `<button class="cs-card" data-id="${c.id}"><img src="${jobIcon(c.job, 64)}" alt=""><span class="nm"><b>${escHTML(c.name)}</b><small>${job.name} Lv${c.lv} · ${ZONE_NAMES[c.zone] || ZONE_NAMES.town}</small></span><span class="lp">${fmtDate(c.at).slice(5, 10)}</span></button>`;
+  }).join('') + (list.length < MAX_CHARS ? `<div class="cs-empty">还可以创建 ${MAX_CHARS - list.length} 个角色</div>` : '');
+  box.querySelectorAll('.cs-card').forEach((b) => {
+    b.onclick = () => { if (charsel && charsel.sel !== b.dataset.id) { Audio.sfxPlay('click', 0.6); selectChar(b.dataset.id); } };
+    b.ondblclick = () => { Audio.sfxPlay('confirm'); playCharacter(b.dataset.id); };
+  });
+}
+function selectChar(id, first) {
+  const s = Saves.read(id); if (!s || !charsel) return;
+  charsel.sel = id;
+  const gear = gearFor(s.job, (s.gear || {}).body);
+  if (!charsel.preview) { charsel.preview = new Humanoid(s.app, gear, { faceRes: 512 }); charsel.group.add(charsel.preview.root); }
+  else charsel.preview.build(s.app, gear);
+  const P = charsel.preview; P.setLoop(null); P.setDrawn(false, true); charsel.rotY = 0.35; charsel.cy = charsel.cd = undefined;
+  if (!first) P.play('wave', 2); charsel.idleT = 6;
+  document.querySelectorAll('#cs-items .cs-card').forEach((b) => { b.classList.toggle('on', b.dataset.id === id); if (b.dataset.id === id) b.scrollIntoView({ block: 'nearest' }); });
+  const meta = Saves.list().find((c) => c.id === id) || {}, race = RACES.find((r) => r.id === (s.app || {}).race) || RACES[0], job = JOBS[s.job] || JOBS.gla;
+  const msq = Object.values(QUESTS).filter((q) => q.type === 'msq'), done = msq.filter((q) => s.quests && s.quests[q.id] && s.quests[q.id].status === 'done').length;
+  $('cs-name').textContent = s.name;
+  $('cs-en').textContent = `${job.en} · LV ${s.level}`;
+  $('cs-desc').innerHTML = `${race.name} · ${s.app.gender === 'f' ? '女性' : '男性'} · ${job.name}<br>所在地：${ZONE_NAMES[s.zone] || ZONE_NAMES.town}<br>主线任务：${done} / ${msq.length}　金币：${s.gil ?? 0}<br>最近游玩：${fmtDate(meta.at || Date.now())}`;
+}
+function updateCharSel(dt) {
+  const c = charsel; if (!c || !c.preview) return; const P = c.preview;
+  P.root.rotation.y = c.rotY; P.update(dt, { speed: 0 }); c.ring.rotation.z += dt * 0.2;
+  if (Math.random() < 0.3) G.particles.emit(rand(-3, 3), 0, rand(-3, 3), 0, rand(0.3, 0.8), 0, new THREE.Color('#6ab8ff').multiplyScalar(1.5), 0.12, 3);
+  c.idleT -= dt; if (c.idleT <= 0) { c.idleT = rand(7, 12); P.play(pick(['wave', 'cheer', 'bow']), 2); }
+  // 宽屏：角色列表在右侧，人物偏左；竖屏手机：列表在下方，人物显示在画面上半部分
+  const narrow = innerWidth <= 600, h = P.height, ty = h * 0.52, dist = narrow ? h * 2 + 1.6 : h * 1.35 + 1.2;
+  c.cy = lerp(c.cy ?? ty, ty, Math.min(1, dt * 5)); c.cd = lerp(c.cd ?? dist, dist, Math.min(1, dt * 5));
+  const off = narrow ? 0 : 0.32 * c.cd, look = narrow ? c.cy - 0.22 * c.cd : c.cy;
+  G.camera.position.set(off, c.cy + 0.25, c.cd); G.camera.lookAt(off, look, 0);
+}
+async function deleteChar() {
+  if (!charsel || !charsel.sel) return;
+  const id = charsel.sel, s = Saves.read(id); if (!s) return;
+  const job = JOBS[s.job] || JOBS.gla;
+  const i = await UI.modal('delchar', '删除角色', `<p style="margin:0;line-height:1.8">确定要删除「<b>${escHTML(s.name)}</b>」（${job.name} Lv${s.level}）吗？<br><span style="color:#ff9a8a">角色的等级、物品与任务进度都会被永久删除，无法恢复。</span></p>`, [{ text: '取消' }, { text: '删除角色', primary: true }], { width: '400px', mount: (w) => { const b = w.querySelector('.wf .btn.primary'); b.classList.remove('primary'); b.classList.add('danger'); } });
+  if (i !== 1) return;
+  Saves.remove(id); Audio.sfxPlay('close');
+  if (!Saves.count()) { showTitle(); return; }
+  renderCharList(); selectChar(Saves.list()[0].id);
+}
+$('cs-back').onclick = () => { Audio.sfxPlay('close'); showTitle(); };
+$('cs-play').onclick = () => { if (charsel && charsel.sel) { Audio.sfxPlay('confirm'); playCharacter(charsel.sel); } };
+$('cs-del').onclick = () => deleteChar();
+$('cs-new').onclick = () => { Audio.sfxPlay('confirm'); newCharacter('charsel'); };
+
+// ---------- 角色创建 ----------
+const NAMES1 = ['艾莉丝', '露娜', '卡尔', '希尔达', '雷恩', '米娅', '奥斯卡', '诺拉', '赛勒斯', '菲奥娜', '莱昂', '缇娜', '伊恩', '索菲'], NAMES2 = ['温德', '斯塔林', '月影', '星语', '布莱克', '海风', '银翼', '晨光', '白鸥', '霜语'];
+function randomName() { return `${pick(NAMES1)}·${pick(NAMES2)}`; }
+function randomApp(race) {
+  race = race || pick(RACES).id; const clan = Math.random() < 0.5 ? 0 : 1;
+  const g = race === 'hrothgar' ? 'm' : race === 'viera' ? 'f' : Math.random() < 0.5 ? 'm' : 'f';
+  return { clan, app: { ...DEFAULT_APP, race, gender: g, skin: pick(SKINS[race][clan]), hairStyle: Math.floor(rand(0, 8)), hairColor: pick(HAIR_COLORS), eyeColor: pick(EYE_COLORS), height: rand(0.2, 0.8), build: rand(0.2, 0.8), eyeShape: Math.floor(rand(0, 3)), brows: Math.floor(rand(0, 3)), mouth: Math.floor(rand(0, 3)), facePaint: Math.random() < 0.5 ? 0 : Math.floor(rand(1, 6)), paintColor: pick(PAINT_COLORS), scaleColor: pick(SCALE_COLORS), feature: rand(0.3, 0.8) } };
+}
+function showCreator(from = 'title') {
+  clearWorld(); G.state = 'creator';
+  $('title').hidden = true; $('charsel').hidden = true; $('creator').hidden = false;
+  const { group: grp, ring } = makeStage();
   const r = randomApp('miqote');
   const state = { app: { ...r.app, gender: 'f', hairStyle: 4, hairColor: '#f4f0e8', eyeColor: '#4ab0c8', facePaint: 1, paintColor: '#b8323a' }, clan: 0, job: 'gla', name: randomName(), month: 0, day: 0, deity: 4, fast: false };
   state.app.skin = SKINS.miqote[0][1];
@@ -269,7 +363,8 @@ function showCreator() {
   const rebuild = (light) => { clearTimeout(deb); const go = () => { preview.build(state.app, JOB_GEAR[state.job]); preview.setDrawn(creator.anim === 1, true); }; if (light) deb = setTimeout(go, 60); else go(); };
   const render = UI.creator(state, rebuild);
   UI.onCreatorTab = (tab) => { creator.face = tab === 'look' || tab === 'color'; };
-  $('cc-back').onclick = () => { Audio.sfxPlay('close'); showTitle(); };
+  $('cc-back').textContent = from === 'charsel' ? '返回角色列表' : '返回标题';
+  $('cc-back').onclick = () => { Audio.sfxPlay('close'); if (from === 'charsel') showCharSelect(); else showTitle(); };
   $('cc-rand').onclick = () => { const rr = randomApp(); Object.assign(state.app, rr.app); state.clan = rr.clan; Audio.sfxPlay('click'); rebuild(); render(); };
   $('cc-face').onclick = () => { creator.face = !creator.face; Audio.sfxPlay('click'); };
   $('cc-anim').onclick = () => { creator.anim = (creator.anim + 1) % 5; const a = creator.anim; preview.setLoop(null); preview.setDrawn(a === 1); if (a === 2) preview.play('wave', 2.4); if (a === 3) preview.setLoop('dance'); if (a === 4) preview.play('cheer', 2); Audio.sfxPlay('click'); };
@@ -294,6 +389,7 @@ function newGame(st) {
   const fast = st.fast;
   G.save = { v: 1, name: st.name.trim(), app: { ...st.app }, clan: st.clan, job: st.job, month: st.month, day: st.day, deity: st.deity, level: fast ? 15 : 1, exp: 0, gil: fast ? 3000 : 500, inv: { potion: fast ? 10 : 3 }, gear: { body: 'body1' }, weaponTier: fast ? 1 : 0, quests: {}, flags: {}, emotes: [], mount: false, attuned: {}, zone: 'town', pos: null, stats: { kills: 0, deaths: 0, start: Date.now() } };
   G.save.inv[`w_${st.job}_${G.save.weaponTier}`] = 1; G.save.inv.body1 = 1;
+  G.slot = Saves.create(G.save); // 新的存档槽，不会覆盖其他角色
   if (G.player) { G.player.model.dispose(); G.player = null; }
   startWorld('town', 'start', { intro: true });
 }
@@ -399,6 +495,7 @@ function loop(now) {
   let focus = null;
   if (G.state === 'title') updateTitle(dt);
   else if (G.state === 'creator') updateCreator(dt);
+  else if (G.state === 'charsel') updateCharSel(dt);
   else if ((G.state === 'play' || G.state === 'cutscene') && G.player && G.zone) { for (let i = 0; i < (G.debugSteps || 1); i++) { if (i) G.time += dt; updateGame(dt); } focus = G.player.pos; }
   VFX.update(dt);
   updateEngine(dt, focus || new V3(0, 0, 0));
@@ -579,6 +676,14 @@ function setupInput() {
     if ((k === 'Enter' || k === 'NumpadEnter') && e.altKey) { e.preventDefault(); UI.toggleFullscreen(); return; }
     if (k === 'Escape' && e.repeat) return; // 长按 Esc 退出全屏时，不要反复开关菜单
     if (G.state === 'cutscene' || G.cutscene) { if (k === 'Escape') { G.csSkip = true; if (UI.dialogAdvance) { UI.dialogAdvance(); UI.dialogAdvance && UI.dialogAdvance(); } } else if (k === 'Space' || k === 'Enter' || k === 'KeyF') { UI.dialogAdvance && UI.dialogAdvance(); } e.preventDefault(); return; }
+    if (G.state === 'charsel' && !UI.anyWin()) {
+      const list = Saves.list(), i = list.findIndex((c) => charsel && c.id === charsel.sel);
+      if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); const n = list[(i + (k === 'ArrowDown' ? 1 : list.length - 1)) % list.length]; if (n) { Audio.sfxPlay('click', 0.6); selectChar(n.id); } }
+      else if (k === 'Enter' || k === 'NumpadEnter') { if (charsel && charsel.sel) playCharacter(charsel.sel); }
+      else if (k === 'Escape') showTitle();
+      else if (k === 'Delete') deleteChar();
+      return;
+    }
     if (G.state !== 'play') { if (k === 'Escape') UI.closeTop(); return; }
     if (G.dialogOpen) { if (k === 'Space' || k === 'Enter' || k === 'KeyF' || k === 'NumpadEnter') { UI.dialogAdvance && UI.dialogAdvance(); e.preventDefault(); } return; }
     const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'].indexOf(k);
@@ -614,6 +719,7 @@ function setupInput() {
     const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
     G.input.bothDown = (e.buttons & 3) === 3;
     if (G.state === 'creator' && creator) { creator.rotY += dx * 0.01; return; }
+    if (G.state === 'charsel' && charsel) { charsel.rotY += dx * 0.01; return; }
     if (G.state !== 'play' || G.cutscene) return;
     G.cam.yaw -= dx * 0.0055; G.cam.pitch = clamp(G.cam.pitch + dy * 0.0045, -0.45, 1.35);
   });

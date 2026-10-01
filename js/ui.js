@@ -294,7 +294,7 @@ export const UI = {
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-bloom" ${s.bloom ? 'checked' : ''}> 辉光后期（关闭可提升性能）</label>
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-shadow" ${s.shadows ? 'checked' : ''}> 实时阴影</label>
       ${this.fsSupported() ? `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-fs" ${this.fsActive() ? 'checked' : ''}> 全屏模式（隐藏浏览器界面，Alt+Enter）</label>` : ''}</div>`;
-    const w = this.openWin('system', '系统菜单', body, `<button class="btn" id="sys-help">操作说明</button><button class="btn" id="sys-save">保存进度</button><button class="btn" id="sys-title">返回标题画面</button>`, { width: '360px' });
+    const w = this.openWin('system', '系统菜单', body, `<button class="btn" id="sys-help">操作说明</button><button class="btn" id="sys-save">保存进度</button><button class="btn" id="sys-chars">切换角色</button><button class="btn" id="sys-title">返回标题画面</button>`, { width: '360px' });
     w.querySelector('#set-music').oninput = (e) => { s.music = +e.target.value; Audio.setVolumes(s.music, s.sfx); G.game.saveSettings(); };
     w.querySelector('#set-sfx').oninput = (e) => { s.sfx = +e.target.value; Audio.setVolumes(s.music, s.sfx); G.game.saveSettings(); };
     w.querySelector('#set-bloom').onchange = (e) => { s.bloom = e.target.checked; G.game.saveSettings(); };
@@ -303,6 +303,7 @@ export const UI = {
     w.querySelector('#sys-help').onclick = () => { this.closeWin('system'); this.winHelp(); };
     w.querySelector('#sys-save').onclick = () => { G.game.save(); this.chat('进度已保存。', 'system'); };
     w.querySelector('#sys-title').onclick = () => { this.closeWin('system'); G.game.toTitle(); };
+    w.querySelector('#sys-chars').onclick = () => { this.closeWin('system'); G.game.toCharSelect(); };
   },
   winHelp() {
     const rows = [['W A S D', '移动（相对镜头方向）'], ['Space', '跳跃'], ['R', '冲刺'], ['鼠标拖动', '旋转视角（左键或右键）'], ['滚轮', '缩放视角'], ['鼠标点击', '选择目标'], ['Tab', '切换敌人目标'], ['Esc', '取消目标 / 关闭窗口'], ['F', '交谈 / 调查'], ['1~0 - =', '热键栏第一行技能'], ['Shift+1~5', '冲刺、回复药、坐骑、极限技、返回'], ['V', '召唤 / 解除坐骑'], ['C I J M U E', '角色 · 物品 · 任务 · 地图 · 任务搜索器 · 情感动作'], ['Enter', '聊天输入（支持 /wave 等指令）'], ['Alt+Enter', '全屏 / 退出全屏（Mac 为 Option+Enter）']];
