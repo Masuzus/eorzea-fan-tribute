@@ -491,7 +491,7 @@ function playerPhysics(dt) {
   const P = G.player, Z = G.zone; const ground = Z.heightAt(P.pos.x, P.pos.z) ?? P.pos.y;
   if (P.air) { P.vy -= 24 * dt; P.pos.y += P.vy * dt; if (P.pos.y <= ground && P.vy <= 0) { P.pos.y = ground; P.air = false; P.vy = 0; } }
   else if (ground < P.pos.y - 0.7) { P.air = true; P.vy = 0; }
-  else P.pos.y = lerp(P.pos.y, ground, Math.min(1, dt * 20));
+  else P.pos.y = lerp(P.pos.y, ground, 1 - Math.exp(-dt * 20)); // 与帧率无关的平滑，帧间隔不均匀时不会上下抖动
 }
 function jump() { const P = G.player; if (P.air || P.casting || P.dead || G.dialogOpen) return; P.air = true; P.vy = P.mounted ? 9 : 7.5; if (P.mounted && chocobo) chocobo.play('flap', 0.6); if (P.emoteLoop) { P.model.setLoop(null); P.emoteLoop = null; } }
 
@@ -500,7 +500,9 @@ function updateCamera(dt) {
   const P = G.player, c = G.cam, Z = G.zone;
   c.tdist = clamp(c.tdist, 2, Z.camMax || 16); c.dist += (c.tdist - c.dist) * Math.min(1, dt * 8);
   const head = P.pos.y + (P.mounted ? 2.6 : P.height * 0.88);
-  c.target.x += (P.pos.x - c.target.x) * Math.min(1, dt * 14); c.target.z += (P.pos.z - c.target.z) * Math.min(1, dt * 14); c.target.y += (head - c.target.y) * Math.min(1, dt * 8);
+  // 水平方向镜头紧跟角色：带平滑的跟随在帧间隔不均匀时，滞后距离每帧都不同，
+  // 横向或斜向移动时角色与头顶名牌会左右抖动。只在高度上保留平滑（跳跃、上下坡）。
+  c.target.x = P.pos.x; c.target.z = P.pos.z; c.target.y += (head - c.target.y) * (1 - Math.exp(-dt * 8));
   placeCamera();
 }
 function placeCamera() {
@@ -513,6 +515,7 @@ function placeCamera() {
   const pos = new V3(c.target.x - Math.sin(c.yaw) * cp * dist, c.target.y + Math.sin(c.pitch) * dist, c.target.z - Math.cos(c.yaw) * cp * dist);
   const h = Z ? Z.heightAt(pos.x, pos.z) : null; if (h !== null && pos.y < h + 0.5) pos.y = h + 0.5;
   G.camera.position.copy(pos); G.camera.lookAt(c.target);
+  G.camera.updateMatrixWorld(); // lookAt 不会更新视图矩阵里的朝向；名牌投影在渲染之前进行，需要本帧的矩阵
 }
 function snapCamera() { const P = G.player, c = G.cam; c.target.set(P.pos.x, P.pos.y + P.height * 0.88, P.pos.z); c.dist = c.tdist; placeCamera(); }
 

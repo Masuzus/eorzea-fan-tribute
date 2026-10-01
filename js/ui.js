@@ -527,12 +527,14 @@ export const UI = {
       if (n._k !== key) {
         n._k = key; n.className = cls;
         n.innerHTML = `${bub ? `<div class="bub">${esc(bub)}</div>` : ''}${e.qmark ? `<img class="qi" src="${qIcon(e.qmark)}" alt="">` : ''}${e.title && !isP ? `<div class="t">《${esc(e.title)}》</div>` : ''}<div class="n">${isP ? esc(G.save.name) : (e.faction === 'enemy' ? `Lv${e.level} ` : '') + esc(e.name)}</div>${isP ? `<div class="t" style="color:#9fc6ff">«拂晓»</div>` : ''}${showHp ? '<div class="hp"><i></i></div>' : ''}`;
-        n._hp = n.querySelector('.hp i');
+        n._hp = n.querySelector('.hp i'); n._hpw = null;
       }
-      if (n._hp) n._hp.style.width = (e.hp / e.maxHp) * 100 + '%';
-      const sc = clamp(1.25 - d / 50, 0.7, 1.1);
-      n.style.transform = `translate(${(v.x * 0.5 + 0.5) * W}px, ${(-v.y * 0.5 + 0.5) * H}px) translate(-50%, -100%) scale(${sc.toFixed(2)})`; n.style.left = '0'; n.style.top = '0';
-      n.style.opacity = e.dead ? 0.5 : 1;
+      if (n._hp) { const w = Math.round((e.hp / e.maxHp) * 1000) / 10 + '%'; if (n._hpw !== w) { n._hpw = w; n._hp.style.width = w; } }
+      // 位置取整像素、缩放按 0.05 分级：文字不会因为亚像素位置或缩放的细微变化每帧重新栅格化而闪动
+      const sc = Math.round(clamp(1.25 - d / 50, 0.7, 1.1) * 20) / 20;
+      const tf = `translate(${Math.round((v.x * 0.5 + 0.5) * W)}px, ${Math.round((-v.y * 0.5 + 0.5) * H)}px) translate(-50%, -100%) scale(${sc})`;
+      if (n._tf !== tf) { n._tf = tf; n.style.transform = tf; }
+      const op = e.dead ? '0.5' : '1'; if (n._op !== op) { n._op = op; n.style.opacity = op; }
       seen.add(e.id);
     }
     for (const [id, n] of this.np) if (!seen.has(id)) { n.remove(); this.np.delete(id); }
@@ -540,7 +542,7 @@ export const UI = {
   clearPlates() { for (const n of this.np.values()) n.remove(); this.np.clear(); $('flytext').innerHTML = ''; },
   flytext(e, text, cls) {
     const host = $('flytext'); if (host.children.length > 40) return;
-    const v = e.hitPos().project(G.camera); if (v.z > 1) return;
+    G.camera.updateMatrixWorld(); const v = e.hitPos().project(G.camera); if (v.z > 1) return;
     const el = document.createElement('div'); el.className = 'fly ' + cls; el.textContent = text;
     el.style.left = ((v.x * 0.5 + 0.5) * innerWidth + (Math.random() - 0.5) * 60) + 'px'; el.style.top = ((-v.y * 0.5 + 0.5) * innerHeight - 20) + 'px';
     host.appendChild(el); setTimeout(() => el.remove(), 1300);
