@@ -201,6 +201,7 @@ export const UI = {
   },
   closeWin(id) { const w = this.win[id]; if (w) { w.remove(); delete this.win[id]; if (this.onClose && this.onClose[id]) { const f = this.onClose[id]; delete this.onClose[id]; f(); } } },
   anyWin() { return Object.keys(this.win).length > 0; },
+  modalOpen() { return Object.values(this.win).some((w) => w.dataset.modal); }, // 任务面板、确认框等需要先做出选择的窗口
   closeTop() { const ids = Object.keys(this.win); if (!ids.length) return false; const id = ids[ids.length - 1]; if (this.win[id].dataset.modal) return true; this.closeWin(id); Audio.sfxPlay('close'); return true; },
   toggle(kind) { if (this.win[kind]) { this.closeWin(kind); return; } ({ char: () => this.winChar(), inv: () => this.winInv(), journal: () => this.winJournal(), map: () => this.winMap(), duty: () => this.winDuty(), emote: () => this.winEmote(), system: () => this.winSystem(), help: () => this.winHelp() })[kind]?.(); },
   modal(id, title, body, buttons, o = {}) {

@@ -652,6 +652,7 @@ function checkInteract() { const n = nearestInteract(); UI.prompt(n && !G.dialog
 async function interact() {
   if (G.dialogOpen) { if (UI.dialogAdvance) UI.dialogAdvance(); return; }
   if (G.state !== 'play') return;
+  if (UI.modalOpen()) return; // 任务面板等还没做出选择时，不再发起新的交谈（否则会重复交谈、再弹一次面板）
   const n = nearestInteract(); if (!n) return;
   const P = G.player; if (P.mounted) dismount();
   if (n.kind === 'npc') { const e = n.e; P.face(e.pos); game.setTarget(e); if (e.citizen) { e.talking = true; await UI.dialog([[e.name, pick(BARKS)]]); e.talking = false; return; } await Story.talk(e); }
@@ -675,7 +676,7 @@ function setupInput() {
     const k = e.code; G.input.keys[k] = true;
     if ((k === 'Enter' || k === 'NumpadEnter') && e.altKey) { e.preventDefault(); UI.toggleFullscreen(); return; }
     if (k === 'Escape' && e.repeat) return; // 长按 Esc 退出全屏时，不要反复开关菜单
-    if (G.state === 'cutscene' || G.cutscene) { if (k === 'Escape') { G.csSkip = true; if (UI.dialogAdvance) { UI.dialogAdvance(); UI.dialogAdvance && UI.dialogAdvance(); } } else if (k === 'Space' || k === 'Enter' || k === 'KeyF') { UI.dialogAdvance && UI.dialogAdvance(); } e.preventDefault(); return; }
+    if (G.state === 'cutscene' || G.cutscene) { if (k === 'Escape') { G.csSkip = true; if (UI.dialogAdvance) { UI.dialogAdvance(); UI.dialogAdvance && UI.dialogAdvance(); } } else if ((k === 'Space' || k === 'Enter' || k === 'KeyF') && !e.repeat) { UI.dialogAdvance && UI.dialogAdvance(); } e.preventDefault(); return; }
     if (G.state === 'charsel' && !UI.anyWin()) {
       const list = Saves.list(), i = list.findIndex((c) => charsel && c.id === charsel.sel);
       if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); const n = list[(i + (k === 'ArrowDown' ? 1 : list.length - 1)) % list.length]; if (n) { Audio.sfxPlay('click', 0.6); selectChar(n.id); } }
@@ -685,7 +686,7 @@ function setupInput() {
       return;
     }
     if (G.state !== 'play') { if (k === 'Escape') UI.closeTop(); return; }
-    if (G.dialogOpen) { if (k === 'Space' || k === 'Enter' || k === 'KeyF' || k === 'NumpadEnter') { UI.dialogAdvance && UI.dialogAdvance(); e.preventDefault(); } return; }
+    if (G.dialogOpen) { if (k === 'Space' || k === 'Enter' || k === 'KeyF' || k === 'NumpadEnter') { if (!e.repeat) UI.dialogAdvance && UI.dialogAdvance(); e.preventDefault(); } return; }
     const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'].indexOf(k);
     if (idx >= 0) {
       e.preventDefault();
@@ -696,7 +697,7 @@ function setupInput() {
     switch (k) {
       case 'Tab': e.preventDefault(); tabTarget(); break;
       case 'Escape': if (!UI.closeTop()) { if (G.player.target) game.setTarget(null); else UI.toggle('system'); } break;
-      case 'KeyF': case 'NumpadEnter': interact(); break;
+      case 'KeyF': case 'NumpadEnter': if (!e.repeat) interact(); break; // 长按不连发
       case 'Space': e.preventDefault(); jump(); break;
       case 'KeyR': game.useGeneral('sprint'); break;
       case 'KeyV': game.useGeneral('mount'); break;
