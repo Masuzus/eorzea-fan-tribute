@@ -2,7 +2,9 @@
 
 一个在浏览器里运行的 3D 同人游戏，致敬《最终幻想XIV》新生篇的城镇、野外与副本体验。
 
-**在线试玩：** https://claude.ai/artifact/T5xpA4D2RMB6DoNhtHCeWA
+**在线试玩：** https://eorzea-fan-tribute.pages.dev （Cloudflare Pages）
+
+备用地址：https://claude.ai/artifact/T5xpA4D2RMB6DoNhtHCeWA
 
 > 非官方粉丝致敬作品，与 SQUARE ENIX 无任何关联。项目不包含任何官方素材：所有模型、贴图、图标与音乐均由代码在运行时程序化生成，旋律为原创。
 
@@ -47,7 +49,7 @@ npm run build:dev    # 不压缩，便于调试
 
 ## 部署到 Cloudflare Pages
 
-使用 wrangler 直接上传 `dist/`，配置见 `wrangler.jsonc`（项目名 `eorzea-fan-tribute`）。
+使用 wrangler 直接上传 `dist/`，配置见 `wrangler.jsonc`（项目名 `eorzea-fan-tribute`，线上地址 https://eorzea-fan-tribute.pages.dev）。
 
 ```bash
 npx wrangler login   # 首次使用需要登录 Cloudflare
