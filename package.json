@@ -8,7 +8,9 @@
     "build": "node build.mjs",
     "build:dev": "node build.mjs --dev",
     "preview": "npm run build && wrangler pages dev dist",
-    "deploy": "npm run build && wrangler pages deploy"
+    "deploy": "npm run build && wrangler pages deploy",
+    "realm:dev": "wrangler dev --config realm/wrangler.jsonc",
+    "realm:deploy": "wrangler deploy --config realm/wrangler.jsonc"
   },
   "dependencies": {
     "esbuild": "^0.25.0",

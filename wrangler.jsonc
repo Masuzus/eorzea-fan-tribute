@@ -2,5 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "eorzea-fan-tribute",
   "compatibility_date": "2026-09-30",
-  "pages_build_output_dir": "dist"
+  "pages_build_output_dir": "dist",
+  // 联机：/realm 由 functions/realm.js 转发到 eorzea-realm Worker 的 Durable Object
+  "durable_objects": {
+    "bindings": [{ "name": "REALM", "class_name": "Realm", "script_name": "eorzea-realm" }]
+  }
 }

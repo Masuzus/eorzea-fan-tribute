@@ -25,6 +25,13 @@ export const JOB_GEAR = {
   thm: { robe: '#2e2238', top: '#2e2238', top2: '#6a4a7a', pants: '#221a22', boots: '#221a22', gloves: '#3a2a3a', accent: '#b0404a', belt: '#8a6a3a', weapon: 'scepter', hood: '#2e2238' },
 };
 
+// 职业初始装备配色；穿上「蛇蝎帮船长外套」时换成红色外套
+export function gearFor(job, body) {
+  const g = { ...(JOB_GEAR[job] || JOB_GEAR.gla) };
+  if (body === 'body2') { g.top = '#7a1c1c'; g.top2 = '#e8dcc0'; g.accent = '#c9a44f'; }
+  return g;
+}
+
 function shade(hex, amt) { const c = new THREE.Color(hex); const h = {}; c.getHSL(h); c.setHSL(h.h, h.s, clamp(h.l + amt, 0, 1)); return '#' + c.getHexString(); }
 const GEO = new Map();
 function cg(k, fn) { let g = GEO.get(k); if (!g) { g = fn(); GEO.set(k, g); } return g; }

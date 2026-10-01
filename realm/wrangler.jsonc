@@ -1,0 +1,12 @@
+// 联机房间服务器（Cloudflare Worker + Durable Objects）。不开放 workers.dev 地址，只通过 Pages Function 访问。
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "eorzea-realm",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": false,
+  "durable_objects": {
+    "bindings": [{ "name": "REALM", "class_name": "Realm" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Realm"] }]
+}

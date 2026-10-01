@@ -310,7 +310,7 @@ export const Combat = {
     }
     this.tick += dt; const serverTick = this.tick >= 3; if (serverTick) this.tick -= 3;
     for (const e of G.entities) {
-      if (e.kind === 'npc') continue;
+      if (e.kind === 'npc' || e.kind === 'remote') continue;
       e.gcd = Math.max(0, e.gcd - dt); e.animLock = Math.max(0, e.animLock - dt);
       for (const k in e.cd) if (e.cd[k] > 0) e.cd[k] -= dt;
       if (e.combo) { e.combo.t -= dt; if (e.combo.t <= 0) e.combo = null; }

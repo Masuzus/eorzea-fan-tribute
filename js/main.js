@@ -1,13 +1,14 @@
 // 游戏主循环：标题、角色创建、地图加载、玩家控制、镜头、目标选择、交互、坐骑、输入、存档
 import { THREE, G, initEngine, setEnvironment, updateEngine, render, clamp, lerp, rand, pick, angDiff, disposeGroup, makeWater } from './engine.js';
 import { Audio } from './audio.js';
-import { Humanoid, buildModel, JOB_GEAR, DEFAULT_APP } from './character.js';
+import { Humanoid, buildModel, JOB_GEAR, DEFAULT_APP, gearFor } from './character.js';
 import { JOBS, GENERAL, EMOTES, RACES, SKINS, HAIR_COLORS, EYE_COLORS, PAINT_COLORS, SCALE_COLORS, NPCS, ALLIES, CITIZENS, BARKS, MOBS, QUESTS, ITEMS, TIPS, expToNext, MAX_LEVEL, weaponItem } from './data.js';
 import { buildZone, aetheryte, rockVariant } from './zones.js';
 import { VFX } from './vfx.js';
 import { Combat, Entity, bossScript } from './combat.js';
 import { UI } from './ui.js';
 import { Story } from './story.js';
+import { Net } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const PI = Math.PI;
@@ -15,7 +16,7 @@ const SAVE_KEY = 'eorzea-fan-save-v1', SET_KEY = 'eorzea-fan-settings-v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const V3 = THREE.Vector3;
 
-window.__eorzea = G; G.debug = { Combat, JOBS, QUESTS, Story, UI };
+window.__eorzea = G; G.debug = { Combat, JOBS, QUESTS, Story, UI, Net };
 G.ui = UI; G.cam ={ yaw: PI, pitch: 0.32, dist: 7, tdist: 7, target: new V3() };
 G.input = { keys: {}, drag: null, joy: null, bothDown: false };
 G.tweens = [];
@@ -58,7 +59,7 @@ const game = G.game = {
     }
     game.say(v);
   },
-  say(t) { if (!t) return; UI.chat(`${G.save.name}：${t}`, 'say'); G.player.bubble = { text: t, until: G.time + 5 }; },
+  say(t) { if (!t) return; UI.chat(`${G.save.name}：${t}`, 'say'); G.player.bubble = { text: t, until: G.time + 5 }; Net.chat(t); },
   emote(id) {
     const em = EMOTES.find((e) => e.id === id); const P = G.player; if (!em || !P || P.dead) return;
     if (em.locked && !G.save.emotes.includes(id)) { UI.error('尚未习得这个情感动作'); return; }
@@ -68,6 +69,7 @@ const game = G.game = {
     if (em.loop) P.model.setLoop(id); else { P.model.setLoop(null); P.model.play(id, em.dur); }
     P.emoteLoop = em.loop ? id : null;
     const name = G.save.name; UI.chat(game.fmt((T ? em.textT : em.text).replace('{a}', name).replace('{b}', T ? T.name : '')), 'emote');
+    Net.emote(id, T ? T.name : '');
     Story.onEmote(id, T);
   },
   useSlot(sk) {
@@ -138,7 +140,7 @@ requestAnimationFrame(loop);
 // 世界管理
 // =====================================================================
 function clearWorld() {
-  VFX.clear(); G.particles.clear(); Combat.reset(); UI.clearPlates();
+  Net.close(); VFX.clear(); G.particles.clear(); Combat.reset(); UI.clearPlates();
   for (const e of G.entities.slice()) if (e !== G.player) removeEntity(e);
   if (G.player) { G.scene.remove(G.player.visual); if (chocobo) G.scene.remove(chocobo.root); }
   G.entities = G.player ? [G.player] : [];
@@ -162,10 +164,11 @@ function computeStats(P) {
   P.crit = 0.1 + (S.gear.ear ? ITEMS[S.gear.ear].crit || 0 : 0);
   if (!had || P.hp > P.effMaxHp) P.hp = P.effMaxHp;
 }
-function playerGear() { const S = G.save; const g = { ...JOB_GEAR[S.job] }; if (S.gear.body === 'body2') { g.top = '#7a1c1c'; g.top2 = '#e8dcc0'; g.accent = '#c9a44f'; g.robe = g.robe || false; } return g; }
+function playerGear() { return gearFor(G.save.job, G.save.gear.body); }
 function makePlayer() {
   const S = G.save, job = JOBS[S.job];
   const model = new Humanoid(S.app, playerGear(), { faceRes: 512 });
+  const play = model.play.bind(model); model.play = (name, dur) => { play(name, dur); Net.act(name); }; // 自己的动作同步给其他玩家
   const P = new Entity({ name: S.name, kind: 'player', faction: 'party', model, level: S.level, role: job.role, job: S.job, radius: 0.5, height: model.height });
   P.maxHp = 0; computeStats(P); P.hp = S.hp && S.hp > 0 ? Math.min(S.hp, P.effMaxHp) : P.effMaxHp;
   return P;
@@ -202,7 +205,7 @@ function spawnMob(kind, level, x, z, o = {}) {
 
 // ---------- 标题画面 ----------
 function showTitle() {
-  G.state = 'title'; G.cutscene = false; G.csSkip = false; clearWorld();
+  G.state = 'title'; G.cutscene = false; G.csSkip = false; Net.leave(); clearWorld();
   if (G.player) { G.player.model.dispose(); G.player = null; G.entities = []; }
   chocobo = null;
   $('title').hidden = false; $('hud').hidden = true; $('creator').hidden = true; $('dialog').hidden = true; UI.letterbox(false); UI.loading(false);
@@ -329,6 +332,7 @@ async function loadZone(id, spawnKey, opts = {}) {
   G.state = 'play';
   if (!opts.intro) { UI.fade(false, false, 700); UI.zoneTitle(Z.name, Z.sub, Z.en); Audio.play(Z.music); }
   UI.chat(`进入了「${Z.name}」。`, 'system');
+  Net.enter(id);
   await Story.onZoneEnter(Z, opts);
   game.save();
 }
@@ -395,6 +399,7 @@ function updateGame(dt) {
   if (canControl) playerInput(dt); else if (!G.cutscene) P.moveSpeed = 0;
   playerPhysics(dt);
   Combat.update(dt);
+  Net.update(dt);
   for (const e of G.entities) {
     if (e.kind === 'enemy') Combat.enemyAI(e, dt);
     else if (e.kind === 'ally' && !G.cutscene) Combat.allyAI(e, dt);
@@ -415,7 +420,7 @@ function updateGame(dt) {
   Z.update(dt);
   // 目标圈
   const T = P.target;
-  if (T && !(T.dead && T.faction === 'enemy' && T.deadT > 1.2) && !T.hidden) { targetRing.visible = true; targetRing.position.set(T.pos.x, (Z.heightAt(T.pos.x, T.pos.z) ?? T.pos.y) + 0.06, T.pos.z); const s = clamp(T.radius * 2.6, 1.2, 12); targetRing.scale.set(s, 1, s); targetRing.rotation.y += dt * 0.6; targetRing.material.color.set(T.faction === 'enemy' ? '#ff5a4a' : T.faction === 'party' ? '#5ab0ff' : '#8aff8a'); }
+  if (T && !(T.dead && T.faction === 'enemy' && T.deadT > 1.2) && !T.hidden) { targetRing.visible = true; targetRing.position.set(T.pos.x, (Z.heightAt(T.pos.x, T.pos.z) ?? T.pos.y) + 0.06, T.pos.z); const s = clamp(T.radius * 2.6, 1.2, 12); targetRing.scale.set(s, 1, s); targetRing.rotation.y += dt * 0.6; targetRing.material.color.set(T.faction === 'enemy' ? '#ff5a4a' : T.faction === 'party' ? '#5ab0ff' : T.faction === 'remote' ? '#c8dcff' : '#8aff8a'); }
   else { targetRing.visible = false; if (T && T.faction === 'enemy' && T.dead && T.deadT > 1.2) P.target = null; }
   if (G.state === 'play') { checkInteract(); checkTransitions(); }
   Story.update(dt);

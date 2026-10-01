@@ -101,7 +101,7 @@ export const UI = {
   },
   layoutRight() {
     const s = this.uiScale || 1, box = $('tracker'), d = $('duty'), f = $('fate'); if (!box) return;
-    let y = (272 + box.offsetHeight + 6) * s; d.style.top = y + 'px'; if (!d.hidden) y += (d.offsetHeight + 6) * s; f.style.top = y + 'px';
+    let y = (292 + box.offsetHeight + 6) * s; d.style.top = y + 'px'; if (!d.hidden) y += (d.offsetHeight + 6) * s; f.style.top = y + 'px';
   },
   // ---------- 聊天 ----------
   chat(text, cls = 'system') {
@@ -317,7 +317,7 @@ export const UI = {
     const toS = (x, z) => [S / 2 + (x - P.pos.x) * k, S / 2 + (z - P.pos.z) * k];
     for (const e of G.entities) {
       if (e === P || e.dead && e.faction === 'enemy') continue; const [sx, sy] = toS(e.pos.x, e.pos.z); if (sx < 0 || sy < 0 || sx > S || sy > S) continue;
-      const col = e.faction === 'enemy' ? (e.inCombat || e.def.aggro ? '#ff5a4a' : '#ffd24a') : e.faction === 'party' ? '#5ab0ff' : null;
+      const col = e.faction === 'enemy' ? (e.inCombat || e.def.aggro ? '#ff5a4a' : '#ffd24a') : e.faction === 'party' ? '#5ab0ff' : e.faction === 'remote' ? '#f2f6ff' : null;
       if (!col || e.kind === 'npc') continue; c.fillStyle = col; c.beginPath(); c.arc(sx, sy, e.boss ? 5 : 3, 0, 7); c.fill(); c.strokeStyle = '#000'; c.lineWidth = 1; c.stroke();
     }
     for (const m of this.markers()) {
@@ -470,6 +470,11 @@ export const UI = {
   },
   dutyInfo(html) { const d = $('duty'); if (!html) { d.hidden = true; this.layoutRight(); return; } d.hidden = false; d.innerHTML = html; this.layoutRight(); },
   fateInfo(html) { const f = $('fate'); if (!html) { f.hidden = true; return; } f.hidden = false; f.innerHTML = html; this.layoutRight(); },
+  netStatus(s, count) {
+    const el = $('net-status'); if (!el) return;
+    const t = { connecting: '正在连接服务器…', reconnecting: '连接中断，正在重连…', online: `在线 · 本地图 ${count} 名冒险者`, offline: '离线模式（单人游戏）', solo: '副本中（单人）' }[s];
+    el.hidden = !t; el.className = 'net num ' + s; el.textContent = t ? '● ' + t : '';
+  },
   prompt(text) { const p = $('prompt'); if (!text) { if (!p.hidden) p.hidden = true; return; } if (p.dataset.t !== text) { p.dataset.t = text; p.innerHTML = `<kbd>F</kbd>${esc(text)}`; } p.hidden = false; },
   // ---------- 名牌与飞字 ----------
   updateNameplates() {
@@ -483,7 +488,7 @@ export const UI = {
       if (!n) {
         n = document.createElement('div'); host.appendChild(n); this.np.set(e.id, n); n._k = '';
       }
-      const isP = e === G.player; const cls = 'np ' + (isP ? 'player' : e.faction === 'party' ? 'party' : e.kind === 'npc' ? 'npc' : 'enemy' + (e.inCombat || (e.def && e.def.aggro) ? ' hostile' : ''));
+      const isP = e === G.player; const cls = 'np ' + (isP ? 'player' : e.faction === 'party' ? 'party' : e.kind === 'remote' ? 'remote' : e.kind === 'npc' ? 'npc' : 'enemy' + (e.inCombat || (e.def && e.def.aggro) ? ' hostile' : ''));
       const showHp = e.faction === 'enemy' && e.inCombat && !e.dead;
       const bub = e.bubble && e.bubble.until > G.time ? e.bubble.text : '';
       const key = cls + '|' + (e.qmark || '') + '|' + bub + '|' + showHp + '|' + (e.dead ? 1 : 0) + '|' + e.name;

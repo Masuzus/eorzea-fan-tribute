@@ -131,7 +131,9 @@ select.text-in { font-size: 13px; }
 #mm canvas { display: block; }
 #mm .n { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font-family: var(--f-latin); font-size: 11px; color: var(--gold); text-shadow: 0 0 3px #000; }
 #mm .clock { text-align: right; margin-top: 10px; font-size: 12px; color: #fff; text-shadow: 0 1px 3px #000; padding-right: 4px; }
-#tracker { right: 14px; top: calc(272px * var(--ui, 1)); width: 260px; transform-origin: top right; transform: scale(var(--ui, 1)); }
+#mm .net { text-align: right; margin-top: 3px; font-size: 12px; color: var(--muted); text-shadow: 0 1px 3px #000; padding-right: 4px; }
+#mm .net.online { color: #8fe07a; } #mm .net.connecting, #mm .net.reconnecting { color: #ffd27a; } #mm .net.solo { color: #9fc6ff; }
+#tracker { right: 14px; top: calc(292px * var(--ui, 1)); width: 260px; transform-origin: top right; transform: scale(var(--ui, 1)); }
 .tq { padding: 8px 10px; margin-bottom: 6px; background: linear-gradient(90deg, rgba(0,0,0,0), rgba(10,10,14,.65) 30%); border-radius: 4px; pointer-events: auto; cursor: pointer; text-align: right; }
 .tq .qt { font-size: 13px; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
 .tq .qt img { width: 18px; height: 18px; }
@@ -218,7 +220,7 @@ select.text-in { font-size: 13px; }
 #nameplates, #flytext { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .np { position: absolute; transform: translate(-50%, -100%); text-align: center; white-space: nowrap; text-shadow: 0 0 3px #000, 0 0 2px #000, 0 1px 1px #000; font-size: 13px; line-height: 1.25; }
 .np .t { font-size: 11px; color: #cfe8c8; }
-.np.npc .n { color: #d8ffc8; } .np.enemy .n { color: #ffe070; } .np.enemy.hostile .n { color: #ff8a70; } .np.party .n { color: #9ad0ff; } .np.player .n { color: #fff; }
+.np.npc .n { color: #d8ffc8; } .np.remote .n { color: #f2f6ff; } .np.remote .t { color: #9fc6ff; } .np.enemy .n { color: #ffe070; } .np.enemy.hostile .n { color: #ff8a70; } .np.party .n { color: #9ad0ff; } .np.player .n { color: #fff; }
 .np .hp { width: 70px; height: 4px; margin: 2px auto 0; background: rgba(0,0,0,.7); border-radius: 2px; overflow: hidden; }
 .np .hp i { display: block; height: 100%; background: #ff6a4a; }
 .np .qi { width: 34px; height: 34px; display: block; margin: 0 auto 2px; animation: bob 1.4s ease-in-out infinite; filter: drop-shadow(0 2px 3px rgba(0,0,0,.7)); }
@@ -342,6 +344,7 @@ select.text-in { font-size: 13px; }
       <div class="zn" id="zone-name"></div><div class="zs" id="zone-sub"></div>
       <div class="ring"><canvas id="minimap" width="200" height="200"></canvas><span class="n">N</span></div>
       <div class="clock num" id="clock"></div>
+      <div class="net num" id="net-status" hidden></div>
     </div>
     <div id="tracker" class="anchor"></div>
     <div id="duty" class="anchor panel" hidden></div>
