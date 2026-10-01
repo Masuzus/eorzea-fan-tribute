@@ -561,6 +561,8 @@ function setupInput() {
   addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
     const k = e.code; G.input.keys[k] = true;
+    if ((k === 'Enter' || k === 'NumpadEnter') && e.altKey) { e.preventDefault(); UI.toggleFullscreen(); return; }
+    if (k === 'Escape' && e.repeat) return; // 长按 Esc 退出全屏时，不要反复开关菜单
     if (G.state === 'cutscene' || G.cutscene) { if (k === 'Escape') { G.csSkip = true; if (UI.dialogAdvance) { UI.dialogAdvance(); UI.dialogAdvance && UI.dialogAdvance(); } } else if (k === 'Space' || k === 'Enter' || k === 'KeyF') { UI.dialogAdvance && UI.dialogAdvance(); } e.preventDefault(); return; }
     if (G.state !== 'play') { if (k === 'Escape') UI.closeTop(); return; }
     if (G.dialogOpen) { if (k === 'Space' || k === 'Enter' || k === 'KeyF' || k === 'NumpadEnter') { UI.dialogAdvance && UI.dialogAdvance(); e.preventDefault(); } return; }

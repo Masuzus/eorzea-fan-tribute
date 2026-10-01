@@ -195,6 +195,9 @@ select.text-in { font-size: 13px; }
 #menubar { right: 14px; bottom: 14px; display: flex; gap: 4px; pointer-events: auto; transform-origin: bottom right; transform: scale(var(--ui, 1)); }
 #menubar button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(230,201,130,.45); background: radial-gradient(circle at 50% 35%, #4a4438, #1c1a16); color: var(--gold); font-size: 15px; cursor: pointer; font-family: var(--f-display); }
 #menubar button:hover { filter: brightness(1.35); }
+#menubar button svg { display: block; margin: auto; width: 17px; height: 17px; }
+#menubar #btn-fs .fs-exit, #menubar #btn-fs.on .fs-enter { display: none; }
+#menubar #btn-fs.on .fs-exit { display: block; }
 #prompt { left: 50%; top: 62%; transform: translateX(-50%); padding: 6px 14px; font-size: 13px; }
 #prompt kbd { display: inline-block; padding: 0 6px; margin-right: 6px; border-radius: 3px; background: #e6c982; color: #1a1408; font-weight: 700; font-family: var(--f-latin); }
 #err { left: 50%; top: 30%; transform: translateX(-50%); font-size: 17px; color: #ffd8c8; text-shadow: 0 0 4px #000, 0 0 10px rgba(255,60,40,.8), 0 2px 2px #000; white-space: nowrap; opacity: 0; transition: opacity .2s; font-weight: 500; }
@@ -367,7 +370,7 @@ select.text-in { font-size: 13px; }
       <div id="expbar"><div class="lab"><span id="exp-job"></span><span class="num" id="exp-t"></span></div><div class="bar"><i id="exp-fill"></i></div></div>
     </div>
     <div id="menubar" class="anchor">
-      <button data-w="char" title="角色 (C)">角</button><button data-w="inv" title="物品 (I)">包</button><button data-w="journal" title="任务日志 (J)">志</button><button data-w="map" title="地图 (M)">图</button><button data-w="duty" title="任务搜索器 (U)">任</button><button data-w="emote" title="情感动作 (E)">情</button><button data-w="system" title="系统 (Esc)">≡</button>
+      <button data-w="char" title="角色 (C)">角</button><button data-w="inv" title="物品 (I)">包</button><button data-w="journal" title="任务日志 (J)">志</button><button data-w="map" title="地图 (M)">图</button><button data-w="duty" title="任务搜索器 (U)">任</button><button data-w="emote" title="情感动作 (E)">情</button><button data-w="system" title="系统 (Esc)">≡</button><button id="btn-fs" title="全屏 (Alt+Enter)" aria-label="全屏"><svg class="fs-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><svg class="fs-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg></button>
     </div>
     <div id="prompt" class="anchor panel" hidden></div>
     <div id="err" class="anchor"></div>
@@ -392,6 +395,7 @@ select.text-in { font-size: 13px; }
       <button id="btn-continue" disabled>继续冒险</button>
       <button id="btn-help">操作说明</button>
       <button id="btn-sound">音乐：开</button>
+      <button id="btn-fullscreen" hidden>全屏：关</button>
     </div>
     <div class="disclaimer">非官方粉丝致敬作品 · 与 SQUARE ENIX 无任何关联 · 全部模型、贴图与音乐均为程序实时生成</div>
   </div>

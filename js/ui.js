@@ -96,8 +96,37 @@ export const UI = {
     $('chat-input').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { const v = e.target.value.trim(); e.target.value = ''; e.target.blur(); if (v) G.game.chatCommand(v); } if (e.key === 'Escape') e.target.blur(); });
     $('dialog').onclick = () => this.dialogAdvance && this.dialogAdvance();
     this.tip = $('tooltip');
+    this.initFullscreen();
     const scale = () => { this.uiScale = clamp(Math.min(innerWidth / 1600, innerHeight / 900), 0.55, 1.15); document.documentElement.style.setProperty('--ui', this.uiScale.toFixed(3)); this.layoutRight(); };
     addEventListener('resize', scale); scale();
+  },
+  // ---------- 全屏（Fullscreen API：隐藏浏览器的标签栏、地址栏等全部界面） ----------
+  fsSupported() { return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled); },
+  fsActive() { return !!(document.fullscreenElement || document.webkitFullscreenElement); },
+  async toggleFullscreen() {
+    if (!this.fsSupported()) { this.error('当前浏览器不支持网页全屏'); return; }
+    try {
+      if (this.fsActive()) { if (document.exitFullscreen) await document.exitFullscreen(); else document.webkitExitFullscreen(); }
+      else { const el = document.documentElement; if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' }); else el.webkitRequestFullscreen(); }
+    } catch (e) { this.error('当前环境无法切换全屏'); }
+  },
+  initFullscreen() {
+    const ok = this.fsSupported();
+    $('btn-fs').hidden = !ok; $('btn-fullscreen').hidden = !ok;
+    $('btn-fs').onclick = () => { Audio.sfxPlay('click'); this.toggleFullscreen(); };
+    $('btn-fullscreen').onclick = () => { Audio.init(); Audio.sfxPlay('click'); this.toggleFullscreen(); };
+    const sync = () => {
+      const on = this.fsActive();
+      $('btn-fs').classList.toggle('on', on); $('btn-fs').title = on ? '退出全屏 (Alt+Enter)' : '全屏 (Alt+Enter)'; $('btn-fs').setAttribute('aria-label', on ? '退出全屏' : '全屏');
+      $('btn-fullscreen').textContent = on ? '全屏：开' : '全屏：关';
+      const cb = document.getElementById('set-fs'); if (cb) cb.checked = on;
+      // 全屏时锁定 Esc：Esc 继续用于关闭窗口、取消目标；Chrome / Edge 中长按 Esc 退出全屏
+      const kb = navigator.keyboard;
+      if (on && kb && kb.lock) kb.lock(['Escape']).then(() => this.chat('已进入全屏模式。长按 Esc 或按 Alt+Enter 退出。', 'system'), () => this.chat('已进入全屏模式。按 Esc 或 Alt+Enter 退出。', 'system'));
+      else if (on) this.chat('已进入全屏模式。按 Esc 或 Alt+Enter 退出。', 'system');
+      else if (kb && kb.unlock) kb.unlock();
+    };
+    document.addEventListener('fullscreenchange', sync); document.addEventListener('webkitfullscreenchange', sync);
   },
   layoutRight() {
     const s = this.uiScale || 1, box = $('tracker'), d = $('duty'), f = $('fate'); if (!box) return;
@@ -112,7 +141,7 @@ export const UI = {
   show(cls) { if (this.chatTab === 'all') return cls !== 'battle' && cls !== 'help'; if (this.chatTab === 'battle') return cls.startsWith('battle'); return cls === 'help'; },
   renderChat() {
     const log = $('chat-log'); log.innerHTML = '';
-    if (this.chatTab === 'help') { ['【移动】WASD / 方向键，Space 跳跃，R 冲刺。', '【视角】按住鼠标左键或右键拖动旋转，滚轮缩放。', '【目标】鼠标点击，或 Tab 依次选择敌人，Esc 取消。', '【技能】数字键 1~0、-、= 使用热键栏第一行；Shift+1~5 使用第二行。', '【交互】F 与 NPC 交谈、调查物体。', '【窗口】C 角色 · I 物品 · J 任务 · M 地图 · U 任务搜索器 · E 情感动作 · V 坐骑', '【聊天】Enter 输入，/wave /bow /dance /cheer /sit 使用情感动作。'].forEach((t) => { const p = document.createElement('p'); p.className = 'system'; p.textContent = t; log.appendChild(p); }); return; }
+    if (this.chatTab === 'help') { ['【移动】WASD / 方向键，Space 跳跃，R 冲刺。', '【视角】按住鼠标左键或右键拖动旋转，滚轮缩放。', '【目标】鼠标点击，或 Tab 依次选择敌人，Esc 取消。', '【技能】数字键 1~0、-、= 使用热键栏第一行；Shift+1~5 使用第二行。', '【交互】F 与 NPC 交谈、调查物体。', '【窗口】C 角色 · I 物品 · J 任务 · M 地图 · U 任务搜索器 · E 情感动作 · V 坐骑', '【聊天】Enter 输入，/wave /bow /dance /cheer /sit 使用情感动作。', '【全屏】Alt+Enter 或右下角按钮切换全屏（Mac 为 Option+Enter）。'].forEach((t) => { const p = document.createElement('p'); p.className = 'system'; p.textContent = t; log.appendChild(p); }); return; }
     for (const l of this.lines) if (this.show(l.cls)) { const p = document.createElement('p'); p.className = l.cls; p.innerHTML = `<span class="ts">[${l.ts}]</span>${esc(l.text)}`; log.appendChild(p); }
     log.scrollTop = log.scrollHeight;
   },
@@ -262,18 +291,20 @@ export const UI = {
       <label class="field" style="margin:0"><span class="lab gold" style="display:block;font-size:12px;margin-bottom:5px">音乐音量</span><input type="range" class="slider" id="set-music" min="0" max="1" step="0.05" value="${s.music}"></label>
       <label class="field" style="margin:0"><span class="lab gold" style="display:block;font-size:12px;margin-bottom:5px">音效音量</span><input type="range" class="slider" id="set-sfx" min="0" max="1" step="0.05" value="${s.sfx}"></label>
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-bloom" ${s.bloom ? 'checked' : ''}> 辉光后期（关闭可提升性能）</label>
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-shadow" ${s.shadows ? 'checked' : ''}> 实时阴影</label></div>`;
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-shadow" ${s.shadows ? 'checked' : ''}> 实时阴影</label>
+      ${this.fsSupported() ? `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-fs" ${this.fsActive() ? 'checked' : ''}> 全屏模式（隐藏浏览器界面，Alt+Enter）</label>` : ''}</div>`;
     const w = this.openWin('system', '系统菜单', body, `<button class="btn" id="sys-help">操作说明</button><button class="btn" id="sys-save">保存进度</button><button class="btn" id="sys-title">返回标题画面</button>`, { width: '360px' });
     w.querySelector('#set-music').oninput = (e) => { s.music = +e.target.value; Audio.setVolumes(s.music, s.sfx); G.game.saveSettings(); };
     w.querySelector('#set-sfx').oninput = (e) => { s.sfx = +e.target.value; Audio.setVolumes(s.music, s.sfx); G.game.saveSettings(); };
     w.querySelector('#set-bloom').onchange = (e) => { s.bloom = e.target.checked; G.game.saveSettings(); };
     w.querySelector('#set-shadow').onchange = (e) => { s.shadows = e.target.checked; G.sun.castShadow = s.shadows; G.game.saveSettings(); };
+    const fs = w.querySelector('#set-fs'); if (fs) fs.onchange = () => { this.toggleFullscreen(); fs.checked = this.fsActive(); };
     w.querySelector('#sys-help').onclick = () => { this.closeWin('system'); this.winHelp(); };
     w.querySelector('#sys-save').onclick = () => { G.game.save(); this.chat('进度已保存。', 'system'); };
     w.querySelector('#sys-title').onclick = () => { this.closeWin('system'); G.game.toTitle(); };
   },
   winHelp() {
-    const rows = [['W A S D', '移动（相对镜头方向）'], ['Space', '跳跃'], ['R', '冲刺'], ['鼠标拖动', '旋转视角（左键或右键）'], ['滚轮', '缩放视角'], ['鼠标点击', '选择目标'], ['Tab', '切换敌人目标'], ['Esc', '取消目标 / 关闭窗口'], ['F', '交谈 / 调查'], ['1~0 - =', '热键栏第一行技能'], ['Shift+1~5', '冲刺、回复药、坐骑、极限技、返回'], ['V', '召唤 / 解除坐骑'], ['C I J M U E', '角色 · 物品 · 任务 · 地图 · 任务搜索器 · 情感动作'], ['Enter', '聊天输入（支持 /wave 等指令）']];
+    const rows = [['W A S D', '移动（相对镜头方向）'], ['Space', '跳跃'], ['R', '冲刺'], ['鼠标拖动', '旋转视角（左键或右键）'], ['滚轮', '缩放视角'], ['鼠标点击', '选择目标'], ['Tab', '切换敌人目标'], ['Esc', '取消目标 / 关闭窗口'], ['F', '交谈 / 调查'], ['1~0 - =', '热键栏第一行技能'], ['Shift+1~5', '冲刺、回复药、坐骑、极限技、返回'], ['V', '召唤 / 解除坐骑'], ['C I J M U E', '角色 · 物品 · 任务 · 地图 · 任务搜索器 · 情感动作'], ['Enter', '聊天输入（支持 /wave 等指令）'], ['Alt+Enter', '全屏 / 退出全屏（Mac 为 Option+Enter）']];
     this.openWin('help', '操作说明', `<div class="help-grid">${rows.map(([k, v]) => `<div><kbd>${k}</kbd></div><div>${v}</div>`).join('')}</div><p class="desc" style="margin-top:14px">小提示：橙色地面预兆代表敌人的范围攻击，看到后尽快走出范围。连击技能会发光提示下一步。</p>`, '', { width: '460px' });
   },
   // ---------- 小地图 ----------
