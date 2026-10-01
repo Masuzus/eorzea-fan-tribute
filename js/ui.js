@@ -385,7 +385,7 @@ export const UI = {
       const pct = rem > 0 ? (rem / max) * 100 : 0; s.cdv.style.setProperty('--p', pct.toFixed(1) + '%'); s.cdv.style.display = rem > 0 ? '' : 'none';
       s.cdt.textContent = !sk.gcd && rem > 0.05 ? Math.ceil(rem) : '';
       const nomp = Combat.mpCost(P, sk) > P.mp, req = sk.requires && !P.has(sk.requires);
-      s.el.classList.toggle('dis', !locked && (nomp || req));
+      s.el.classList.toggle('dis', !locked && !!(nomp || req));
       let oor = false; if (!locked && sk.target === 'enemy' && P.target && P.target.faction === 'enemy' && !P.target.dead) oor = P.edge(P.target) > sk.range;
       s.el.classList.toggle('oor', oor);
       s.el.classList.toggle('combo', !locked && !!(sk.combo && sk.combo.from === next));
@@ -395,7 +395,7 @@ export const UI = {
       const g = s.g; const rem = P.cd[g.id] || 0; s.cdv.style.setProperty('--p', (rem > 0 ? (rem / g.recast) * 100 : 0).toFixed(1) + '%'); s.cdv.style.display = rem > 0 ? '' : 'none'; s.cdt.textContent = rem > 0.05 ? Math.ceil(rem) : '';
       if (g.id === 'potion') s.cnt.textContent = G.save.inv.potion || 0;
       const dis = (g.id === 'potion' && !(G.save.inv.potion > 0)) || (g.id === 'mount' && !G.save.mount) || (g.id === 'lb' && (Combat.lb < Combat.lbMax || !Combat.inParty())) || (g.id === 'return' && G.zone.dungeon);
-      s.el.classList.toggle('dis', dis); s.el.classList.toggle('proc', g.id === 'lb' && Combat.lb >= Combat.lbMax && Combat.inParty());
+      s.el.classList.toggle('dis', !!dis); s.el.classList.toggle('proc', !!(g.id === 'lb' && Combat.lb >= Combat.lbMax && Combat.inParty()));
     }
   },
   statusHTML(e, big = true) {

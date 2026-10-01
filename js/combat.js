@@ -132,7 +132,7 @@ export const Combat = {
     this.addStatus(e, { id: 'weak', name: '衰弱', dur: 20, debuff: true, dmgUp: -0.2, icon: ['skull', '#8a8a8a', '#2a2a2a'] });
     VFX.pillar(e.pos, '#fff0b0', 6, 1.2); this.fly(e, '复活', 'heal');
   },
-  inParty() { return G.zone && G.zone.dungeon; },
+  inParty() { return !!(G.zone && G.zone.dungeon); },
   // ---------- 技能执行 ----------
   canUse(src, sk) {
     if (src.dead) return '无法战斗';
