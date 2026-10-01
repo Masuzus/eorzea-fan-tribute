@@ -1,5 +1,7 @@
 // 联机协议：客户端与房间服务器共用的常量与数据校验（不依赖 DOM / three.js，服务器端也会打包本文件）
-export const NET_ZONES = ['town', 'field'];
+export const NET_ZONES = ['town', 'field'];             // 进入即连接的地图房间
+export const SIM_ZONES = ['field', 'dungeon'];          // 由服务器计算战斗的房间
+export const INST_RE = /^[0-9a-f-]{36}$/;               // 副本实例 id（UUID）
 export const MAX_PLAYERS = 60;
 export const MAX_MSG = 4096;
 export const RACE_IDS = ['hyur', 'elezen', 'lalafell', 'miqote', 'roegadyn', 'aura', 'viera', 'hrothgar'];
@@ -37,3 +39,9 @@ export function cleanState(m) {
   m = m && typeof m === 'object' ? m : {};
   return { x: num(m.x, -2000, 2000), y: num(m.y, -500, 500), z: num(m.z, -2000, 2000), r: num(m.r, -10, 10), sp: num(m.sp, 0, 30), m: m.m ? 1 : 0, a: m.a ? 1 : 0, d: m.d ? 1 : 0, e: LOOPS.includes(m.e) ? m.e : '' };
 }
+// 战斗相关的自报数据：武器阶段、耳饰、当前 HP/MP、副本入场凭证
+export function cleanCombat(m) {
+  m = m && typeof m === 'object' ? m : {};
+  return { wt: int(m.wt, 0, 2), ear: m.ear ? 1 : 0, hp: num(m.hp, 0, 5000, 0), mp: num(m.mp, 0, 10000, 10000), tk: typeof m.tk === 'string' ? m.tk.slice(0, 40) : '' };
+}
+export const cleanId = (v) => (typeof v === 'string' && v.length <= 12 ? v : '');

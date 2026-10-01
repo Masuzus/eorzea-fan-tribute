@@ -9,6 +9,7 @@ import { Combat, Entity, bossScript } from './combat.js';
 import { UI } from './ui.js';
 import { Story } from './story.js';
 import { Net } from './net.js';
+import { Online } from './online.js';
 
 const $ = (id) => document.getElementById(id);
 const PI = Math.PI;
@@ -16,7 +17,7 @@ const SAVE_KEY = 'eorzea-fan-save-v1', SET_KEY = 'eorzea-fan-settings-v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const V3 = THREE.Vector3;
 
-window.__eorzea = G; G.debug = { Combat, JOBS, QUESTS, Story, UI, Net };
+window.__eorzea = G; G.debug = { Combat, JOBS, QUESTS, Story, UI, Net, Online };
 G.ui = UI; G.cam ={ yaw: PI, pitch: 0.32, dist: 7, tdist: 7, target: new V3() };
 G.input = { keys: {}, drag: null, joy: null, bothDown: false };
 G.tweens = [];
@@ -77,15 +78,20 @@ const game = G.game = {
     if (sk.lv > P.level) { UI.error(`需要达到Lv${sk.lv}`); return; }
     if (P.mounted) dismount();
     if (P.emoteLoop) { P.model.setLoop(null); P.emoteLoop = null; }
-    Combat.use(P, sk);
+    if (G.online) Online.use(sk); else Combat.use(P, sk);
   },
   useGeneral(id) {
     const P = G.player; if (!P || G.state !== 'play' || P.dead) return;
     const g = GENERAL.find((x) => x.id === id); if (P.cd[id] > 0 && id !== 'mount') { UI.error('尚未准备好'); return; }
-    if (id === 'sprint') { Combat.addStatus(P, { id: 'sprint', name: '冲刺', dur: 10, speed: 1.4, icon: g.icon }); P.cd.sprint = g.recast; VFX.ring(P.pos, '#ffe0a0', 2, 0.4); Audio.sfxPlay('buff', 0.4); }
-    else if (id === 'potion') { if (!(G.save.inv.potion > 0)) { UI.error('没有回复药了'); return; } game.removeItem('potion'); Combat.heal(P, P, 0, { flat: P.effMaxHp * 0.3 }); VFX.heal(P, '#ff9ab0'); Audio.sfxPlay('heal', 0.5); P.cd.potion = g.recast; UI.chat('你使用了「回复药」。', 'system'); }
+    if (id === 'sprint') { Combat.addStatus(P, { id: 'sprint', name: '冲刺', dur: 10, speed: 1.4, icon: g.icon, local: true }); P.cd.sprint = g.recast; VFX.ring(P.pos, '#ffe0a0', 2, 0.4); Audio.sfxPlay('buff', 0.4); }
+    else if (id === 'potion') {
+      if (!(G.save.inv.potion > 0)) { UI.error('没有回复药了'); return; }
+      if (G.online && !Net.id) { UI.error('正在连接服务器…'); return; }
+      game.removeItem('potion'); P.cd.potion = g.recast; UI.chat('你使用了「回复药」。', 'system');
+      if (G.online) Online.potion(); else { Combat.heal(P, P, 0, { flat: P.effMaxHp * 0.3 }); VFX.heal(P, '#ff9ab0'); Audio.sfxPlay('heal', 0.5); }
+    }
     else if (id === 'mount') { if (P.mounted) dismount(); else mount(); }
-    else if (id === 'lb') Combat.useLB();
+    else if (id === 'lb') { if (G.online) Online.limitBreak(); else Combat.useLB(); }
     else if (id === 'return') {
       if (G.zone.dungeon) { UI.error('副本中无法使用'); return; } if (Combat.anyCombat()) { UI.error('战斗中无法使用'); return; }
       if (P.mounted) dismount(); P.cd.return = g.recast;
@@ -109,6 +115,9 @@ const game = G.game = {
   toTitle() { game.save(); showTitle(); },
   loadZone: (...a) => loadZone(...a),
   spawnMob: (...a) => spawnMob(...a), spawnAlly: (...a) => spawnAlly(...a), removeEntity: (e) => removeEntity(e), addEntity: (e) => addEntity(e),
+  // 联机失败时改为本地生成魔物 / 副本
+  spawnLocalField() { for (const g of G.zone.mobSpawns) for (let i = 0; i < g.n; i++) spawnFieldMob(g); },
+  localDuty() { Story.dutySetup(); },
   npc(id) { return G.entities.find((e) => e.npcId === id); },
   snapCamera() { snapCamera(); },
   dismount: () => dismount(),
@@ -131,6 +140,8 @@ Combat.on = {
   setTarget: (e) => game.setTarget(e),
   engage: (e) => Story.onEngage(e),
   bossReset: (e) => Story.onBossReset(e),
+  netInterrupt: () => Online.interrupted(),
+  netCombat: () => Online.inCombat(),
 };
 document.addEventListener('pointerdown', () => { Audio.init(); Audio.setVolumes(G.settings.music, G.settings.sfx); }, { once: false });
 showTitle();
@@ -140,7 +151,7 @@ requestAnimationFrame(loop);
 // 世界管理
 // =====================================================================
 function clearWorld() {
-  Net.close(); VFX.clear(); G.particles.clear(); Combat.reset(); UI.clearPlates();
+  Net.close(); Online.reset(); VFX.clear(); G.particles.clear(); Combat.reset(); UI.clearPlates();
   for (const e of G.entities.slice()) if (e !== G.player) removeEntity(e);
   if (G.player) { G.scene.remove(G.player.visual); if (chocobo) G.scene.remove(chocobo.root); }
   G.entities = G.player ? [G.player] : [];
@@ -321,9 +332,9 @@ async function loadZone(id, spawnKey, opts = {}) {
     const ch = new Entity({ name: '小金', title: '陆行鸟', kind: 'npc', faction: 'neutral', model: buildModel('chocobo'), x: -57.5, y: 0, z: 13.2, rot: 2.6, height: 2.3, radius: 0.8, npcId: 'chocobo_npc' }); ch.hp = ch.maxHp = 1; addEntity(ch);
     CITIZENS.forEach((c, i) => { const w = Z.wander; let x, z, k = 0; do { x = rand(w.x0, w.x1); z = rand(w.z0, w.z1); k++; } while (!Z.canWalk(x, z, 0.6) && k < 30); const m = new Humanoid(c.app, c.gear, { faceRes: 128 }); m.root.traverse((o) => { if (o.isMesh) o.castShadow = false; }); const e = new Entity({ name: c.name, kind: 'npc', faction: 'neutral', model: m, x, y: 0, z, rot: rand(0, 6), height: m.height, radius: 0.45, citizen: true }); e.hp = e.maxHp = 1; e.aiT = rand(1, 5); addEntity(e); void i; });
   }
-  if (id === 'field') {
-    for (const g of Z.mobSpawns) for (let i = 0; i < g.n; i++) spawnFieldMob(g);
-  }
+  // 野外与联机副本的魔物由服务器生成（连接失败时再改为本地生成）
+  const online = Online.prepare(id, opts);
+  if (id === 'field' && !online) game.spawnLocalField();
   Story.onZoneLoad(Z, opts);
   snapCamera();
   for (let i = 0; i < 3; i++) { updateEngine(0.016, P.pos); render(); await sleep(16); }
@@ -332,7 +343,7 @@ async function loadZone(id, spawnKey, opts = {}) {
   G.state = 'play';
   if (!opts.intro) { UI.fade(false, false, 700); UI.zoneTitle(Z.name, Z.sub, Z.en); Audio.play(Z.music); }
   UI.chat(`进入了「${Z.name}」。`, 'system');
-  Net.enter(id);
+  Net.enter(id, opts);
   await Story.onZoneEnter(Z, opts);
   game.save();
 }
@@ -398,9 +409,10 @@ function updateGame(dt) {
   const canControl = G.state === 'play' && !G.dialogOpen && !G.cutscene && !P.dead && !P.stunned;
   if (canControl) playerInput(dt); else if (!G.cutscene) P.moveSpeed = 0;
   playerPhysics(dt);
-  Combat.update(dt);
+  if (G.online) Online.update(dt); else Combat.update(dt);
   Net.update(dt);
   for (const e of G.entities) {
+    if (e.net) continue; // 服务器控制的魔物与亲信战友
     if (e.kind === 'enemy') Combat.enemyAI(e, dt);
     else if (e.kind === 'ally' && !G.cutscene) Combat.allyAI(e, dt);
     else if (e.kind === 'npc') npcAI(e, dt);
@@ -408,7 +420,7 @@ function updateGame(dt) {
   // 视觉同步
   for (let i = G.entities.length - 1; i >= 0; i--) {
     const e = G.entities[i];
-    if (e.dead && e.faction === 'enemy') { e.deadT += dt; if (e.deadT > 1.5) e.model.setOpacity(Math.max(0, 1 - (e.deadT - 1.5) / 1.2)); if (e.deadT > 2.8) { removeEntity(e); Story.onRemoved(e); continue; } }
+    if (e.dead && e.faction === 'enemy') { e.deadT += dt; if (e.deadT > 1.5) e.model.setOpacity(Math.max(0, 1 - (e.deadT - 1.5) / 1.2)); if (e.deadT > 2.8 && !e.net) { removeEntity(e); Story.onRemoved(e); continue; } }
     e.visual.position.copy(e.pos); e.visual.rotation.y = e.rot;
     if (e.hidden) { e.visual.visible = false; continue; }
     const far = e !== P && G.camera.position.distanceToSquared(e.pos) > 90 * 90;

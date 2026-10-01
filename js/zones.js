@@ -1,43 +1,9 @@
 // 地图构建：利姆萨·罗敏萨（城镇）、拉诺西亚低地（野外）、天然要害沙斯塔夏溶洞（副本）
 import { THREE, G, M, textures, boxGeo, planeGeo, Batcher, makeWater, fbm, vnoise, rng, smooth, lerp, clamp, canvasTex, signTex, rand } from './engine.js';
+import { Walk, fieldH, dRoad, fieldOpen, FIELD_MOBS, FATE_AREA, DUNGEON_AREAS, DUNGEON_CRATES, DUNGEON_TENTS, DUNGEON_TORCHES, DUNGEON_MAST, DUNGEON_CANNONS, DUNGEON_SEALS, dungeonWalk } from './nav.js';
 
 const PI = Math.PI;
 
-// ---------- 可行走区域 ----------
-class Walk {
-  constructor() { this.a = []; this.blk = []; this.grid = new Map(); }
-  rect(x0, z0, x1, z1, y) { this.a.push({ t: 'r', x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1), y }); }
-  circ(x, z, r, y) { this.a.push({ t: 'c', x, z, r, y }); }
-  ramp(x0, z0, x1, z1, ya, yb) { this.a.push({ t: 'p', x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1), za: z0, zb: z1, ya, yb }); }
-  height(x, z) {
-    let best = null;
-    for (const a of this.a) {
-      let y = null;
-      if (a.t === 'c') { const dx = x - a.x, dz = z - a.z; if (dx * dx + dz * dz <= a.r * a.r) y = a.y; }
-      else if (x >= a.x0 && x <= a.x1 && z >= a.z0 && z <= a.z1) y = a.t === 'r' ? a.y : lerp(a.ya, a.yb, clamp((z - a.za) / (a.zb - a.za), 0, 1));
-      if (y !== null && (best === null || y > best)) best = y;
-    }
-    return best;
-  }
-  key(cx, cz) { return cx * 10007 + cz; }
-  addBlock(b) {
-    const x0 = Math.floor((b.t === 'c' ? b.x - b.r : b.x0) / 10), x1 = Math.floor((b.t === 'c' ? b.x + b.r : b.x1) / 10);
-    const z0 = Math.floor((b.t === 'c' ? b.z - b.r : b.z0) / 10), z1 = Math.floor((b.t === 'c' ? b.z + b.r : b.z1) / 10);
-    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) { const k = this.key(i, j); if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(b); }
-    this.blk.push(b); return b;
-  }
-  box(x0, z0, x1, z1) { return this.addBlock({ t: 'b', x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1), on: true }); }
-  cb(x, z, r) { return this.addBlock({ t: 'c', x, z, r, on: true }); }
-  blocked(x, z, rad = 0.35) {
-    const l = this.grid.get(this.key(Math.floor(x / 10), Math.floor(z / 10))); if (!l) return false;
-    for (const b of l) {
-      if (!b.on) continue;
-      if (b.t === 'c') { const dx = x - b.x, dz = z - b.z, r = b.r + rad; if (dx * dx + dz * dz < r * r) return true; }
-      else if (x > b.x0 - rad && x < b.x1 + rad && z > b.z0 - rad && z < b.z1 + rad) return true;
-    }
-    return false;
-  }
-}
 
 function rockGeo(seed, detail = 1) {
   const g = new THREE.IcosahedronGeometry(1, detail); const p = g.attributes.position;
@@ -333,21 +299,6 @@ function buildTown() {
 // =====================================================================
 // 拉诺西亚低地
 // =====================================================================
-const ROAD = [[-205, 0], [-150, 5], [-110, -4], [-60, 4], [-20, 8], [0, 14], [20, 6], [50, -10], [80, -30], [105, -60], [122, -82]];
-const ROAD2 = [[50, -10], [72, 18], [96, 46]];
-function segDist(px, pz, ax, az, bx, bz) { const dx = bx - ax, dz = bz - az; const t = clamp(((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz), 0, 1); return Math.hypot(px - ax - dx * t, pz - az - dz * t); }
-function dRoad(x, z) { let d = 1e9; for (const R of [ROAD, ROAD2]) for (let i = 0; i < R.length - 1; i++) d = Math.min(d, segDist(x, z, R[i][0], R[i][1], R[i + 1][0], R[i + 1][1])); return d; }
-function fieldH(x, z) {
-  let h = (fbm(x * 0.011 + 3.1, z * 0.011 + 7.7, 4) - 0.45) * 20 + Math.sin(x * 0.013) * 2 + Math.cos(z * 0.017) * 2;
-  const dr = dRoad(x, z), flat = Math.max(1 - smooth(4, 18, dr), 1 - smooth(20, 42, Math.hypot(x + 22, z - 48)), 1 - smooth(10, 22, Math.hypot(x, z - 20)));
-  h = lerp(h, h * 0.2 + 1.2, flat);
-  const coast = 112 + (vnoise(z * 0.02, 5.3) - 0.5) * 30;
-  h = lerp(h, -7, smooth(coast - 28, coast + 12, x));
-  const beach = 1 - smooth(12, 30, Math.hypot(x - 100, z - 55)); h = lerp(h, 1.0 - (x - 100) * 0.07, beach);
-  const cave = 1 - smooth(8, 22, Math.hypot(x - 122, z + 84)); h = lerp(h, 1.2, cave);
-  const r = Math.hypot(x, z * 1.05); h += smooth(175, 210, r) * 32 * (x > 90 ? 0.3 : 1) * (x < -150 ? smooth(6, 16, Math.abs(z)) : 1);
-  return h;
-}
 function buildField() {
   const grp = new THREE.Group(), B = new Batcher(), W = new Walk(), T = textures(), R = rng(42);
   // 地形
@@ -442,17 +393,13 @@ function buildField() {
   return {
     id: 'field', name: '拉诺西亚低地', sub: '盛夏农庄', en: 'LOWER LA NOSCEA', music: 'field', group: grp, walk: W,
     env: { top: '#3274c4', horizon: '#cfe6f2', bottom: '#5a8aa0', sunDir: [0.5, 0.65, 0.3], sunColor: '#fff0d0', clouds: 0.65, fog: ['#cfe6f2', 120, 520], hemiSky: '#d8ecff', hemiGround: '#6a7a4a', hemiInt: 1.0, sunInt: 2.8, exposure: 1.0, bloom: 0.45 },
-    heightAt, canWalk: (x, z, r) => { const h = fieldH(x, z); return h > -1.1 && (Math.hypot(x, z * 1.05) < 188 || (x < -150 && x > -212 && Math.abs(z) < 6.5)) && !W.blocked(x, z, r); },
+    heightAt, canWalk: (x, z, r) => fieldOpen(x, z) && !W.blocked(x, z, r),
     spawns: { fromTown: [-186, 0, PI / 2], aetheryte: [3, 25, PI], cave: [118, -76, PI * 0.8] },
     transitions: [{ x0: -215, z0: -7, x1: -196, z1: 7, to: 'town', spawn: 'fromField' }],
     interacts: [{ id: 'aetheryte2', x: 0, z: 20, r: 5, label: '以太之晶' }, { id: 'sastasha', x: 124, z: -84, r: 7, label: '沙斯塔夏溶洞' }],
     gather: [[-26, 24], [-56, 46], [2, 46], [-40, 70], [-10, 76]],
-    mobSpawns: [
-      { mob: 'ladybug', lv: [2, 4], x: -70, z: 50, r: 16, n: 6 }, { mob: 'ladybug', lv: [2, 3], x: -80, z: -30, r: 14, n: 4 },
-      { mob: 'rat', lv: [3, 5], x: 60, z: 30, r: 14, n: 5 }, { mob: 'rat', lv: [4, 5], x: 88, z: -12, r: 10, n: 3 },
-      { mob: 'sahagin', lv: [5, 7], x: 104, z: 66, r: 15, n: 4 },
-    ],
-    fate: { x: 100, z: 55, r: 20 },
+    mobSpawns: FIELD_MOBS,
+    fate: FATE_AREA,
     aetheryte: { id: 'summerford', name: '盛夏农庄', x: 3, z: 25 },
     labels: [['盛夏农庄', -20, 50], ['东部海滩', 100, 60], ['沙斯塔夏溶洞', 118, -92], ['西风门', -186, 8], ['风车', 12, 68]],
     bounds: [-210, -200, 170, 190], camMax: 18,
@@ -470,16 +417,13 @@ function mergeG(list) {
 // 天然要害沙斯塔夏溶洞
 // =====================================================================
 function buildDungeon() {
-  const grp = new THREE.Group(), B = new Batcher(), W = new Walk(), T = textures();
-  const areas = [
-    ['r', -8, -26, 8, 0], ['r', -4, -40, 4, -24], ['c', 0, -50, 13], ['r', -4, -80, 4, -60], ['c', 0, -94, 16], ['r', -4, -124, 4, -107],
-    ['c', 0, -134, 12], ['r', -4, -162, 4, -143], ['c', 0, -176, 16], ['r', -4, -207, 4, -189], ['c', 0, -222, 17],
-  ];
+  const grp = new THREE.Group(), B = new Batcher(), T = textures();
+  const { W, seals: sealBlocks } = dungeonWalk(), areas = DUNGEON_AREAS;
   const sandM = M('#ffffff', { map: T.sand, r: 1 }), rockM = M('#6a625a', { map: T.rock, flat: true, r: 1 });
   B.add(planeGeo(120, 290, 6), M('#2a2622', { map: T.sand }), 0, -0.05, -120);
   for (const a of areas) {
-    if (a[0] === 'r') { W.rect(a[1], a[2], a[3], a[4], 0); B.add(planeGeo(a[3] - a[1], a[4] - a[2], 4), sandM, (a[1] + a[3]) / 2, 0.01, (a[2] + a[4]) / 2); }
-    else { W.circ(a[1], a[2], a[3], 0); const g = new THREE.CircleGeometry(a[3], 48).rotateX(-PI / 2); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * a[3] / 2, uv.getY(i) * a[3] / 2); B.add(g, sandM, a[1], 0.02, a[2]); }
+    if (a[0] === 'r') { B.add(planeGeo(a[3] - a[1], a[4] - a[2], 4), sandM, (a[1] + a[3]) / 2, 0.01, (a[2] + a[4]) / 2); }
+    else { const g = new THREE.CircleGeometry(a[3], 48).rotateX(-PI / 2); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * a[3] / 2, uv.getY(i) * a[3] / 2); B.add(g, sandM, a[1], 0.02, a[2]); }
   }
   // 岩壁
   const inside = (x, z, pad) => { for (const a of areas) { if (a[0] === 'r') { if (x > a[1] - pad && x < a[3] + pad && z > a[2] - pad && z < a[4] + pad) return true; } else if (Math.hypot(x - a[1], z - a[2]) < a[3] + pad) return true; } return false; };
@@ -502,28 +446,27 @@ function buildDungeon() {
   }
   // 海盗营地
   const wood = M('#ffffff', { map: T.wood });
-  for (const [x, z] of [[-9, -44], [8, -58], [-6, -128], [7, -140], [-5, -8], [6, -18]]) { crate(B, x, 0, z, 1.1, rand(0, 1)); crate(B, x + 1.2, 0, z + 0.3, 0.8, 0.3); barrel(B, x - 0.4, 0, z + 1.4); W.cb(x + 0.4, z + 0.4, 1.6); }
-  for (const [x, z] of [[-10, -56], [10, -48]]) { B.add(new THREE.ConeGeometry(2.2, 3, 4), M('#8a6a4a', { flat: true }), x, 1.5, z, 0, PI / 4, 0); W.cb(x, z, 1.8); }
+  for (const [x, z] of DUNGEON_CRATES) { crate(B, x, 0, z, 1.1, rand(0, 1)); crate(B, x + 1.2, 0, z + 0.3, 0.8, 0.3); barrel(B, x - 0.4, 0, z + 1.4); }
+  for (const [x, z] of DUNGEON_TENTS) B.add(new THREE.ConeGeometry(2.2, 3, 4), M('#8a6a4a', { flat: true }), x, 1.5, z, 0, PI / 4, 0);
   // Boss2 甲板
   B.add(new THREE.CylinderGeometry(15.5, 15.5, 0.4, 40), wood, 0, 0.05, -176);
-  B.add(new THREE.CylinderGeometry(0.5, 0.6, 16, 10), M('#4a3020'), 8, 8, -186); W.cb(8, -186, 0.8);
+  B.add(new THREE.CylinderGeometry(0.5, 0.6, 16, 10), M('#4a3020'), DUNGEON_MAST[0], 8, DUNGEON_MAST[1]);
   { const g = new THREE.PlaneGeometry(10, 6, 6, 3); const p = g.attributes.position; for (let i = 0; i < p.count; i++) p.setZ(i, (1 - Math.pow(p.getX(i) / 5, 2)) * 1.2); g.computeVertexNormals(); B.add(g, M('#e8dcc8', { ds: true }), 8, 11, -185.5); }
-  for (let i = 0; i < 6; i++) { const a = (i / 6) * PI * 2 + 0.3; const x = Math.cos(a) * 14.5, z = -176 + Math.sin(a) * 14.5; B.add(new THREE.CylinderGeometry(0.35, 0.45, 2.2, 10), M('#2a2a30', { m: 0.7, r: 0.4 }), x, 0.9, z, PI / 2, -a + PI / 2, 0); W.cb(x, z, 0.8); }
+  for (const [x, z, a] of DUNGEON_CANNONS) B.add(new THREE.CylinderGeometry(0.35, 0.45, 2.2, 10), M('#2a2a30', { m: 0.7, r: 0.4 }), x, 0.9, z, PI / 2, -a + PI / 2, 0);
   // 水池
   const pool = makeWater(40, { deep: '#04202a', shallow: '#1a8a9a', sky: '#0a3a4a', glow: 1, seg: 40, amp: 0.25 }); pool.position.set(0, -0.35, -248); grp.add(pool);
   const pool2 = makeWater(30, { deep: '#04202a', shallow: '#1a8a9a', sky: '#0a3a4a', glow: 1, seg: 20, amp: 0.2 }); pool2.position.set(22, -0.4, -94); grp.add(pool2);
-  W.cb(0, -250, 13);
   // 封锁墙
   const seals = {};
-  const mkSeal = (id, z) => {
+  const sealIdx = {};
+  for (const [id, z] of DUNGEON_SEALS) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 7), new THREE.MeshBasicMaterial({ color: '#ff7a3a', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    m.position.set(0, 3.5, z); grp.add(m); const b = W.box(-4.5, z - 0.4, 4.5, z + 0.4); b.on = false; seals[id] = seals[id] || []; seals[id].push({ m, b });
-  };
-  mkSeal('b1', -78.5); mkSeal('b1', -109.5); mkSeal('b2', -159.5); mkSeal('b2', -191.5); mkSeal('b3', -204.5);
+    m.position.set(0, 3.5, z); grp.add(m); const i = sealIdx[id] = (sealIdx[id] || 0) + 1; (seals[id] = seals[id] || []).push({ m, b: sealBlocks[id][i - 1] });
+  }
   // 灯光
   const lts = [];
   for (const [x, y, z, col, i] of [[0, 6, -8, '#ffb060', 30], [0, 7, -50, '#ffb060', 40], [0, 9, -94, '#6ad0ff', 55], [0, 8, -176, '#ffb060', 55], [0, 10, -226, '#4ae0ff', 70]]) { const l = new THREE.PointLight(col, i, 40, 1.3); l.position.set(x, y, z); grp.add(l); lts.push(l); }
-  for (const [x, z] of [[-6, -30], [6, -30], [-5, -66], [5, -66], [-5, -150], [5, -150], [-5, -196], [5, -196]]) { B.add(new THREE.CylinderGeometry(0.08, 0.1, 2.2, 6), M('#3a2618'), x, 1.1, z); B.add(new THREE.SphereGeometry(0.22, 8, 6), M('#ffd080', { e: '#ff9a30', ei: 3 }), x, 2.3, z, 0, 0, 0, 1, 1, 1, false); W.cb(x, z, 0.3); }
+  for (const [x, z] of DUNGEON_TORCHES) { B.add(new THREE.CylinderGeometry(0.08, 0.1, 2.2, 6), M('#3a2618'), x, 1.1, z); B.add(new THREE.SphereGeometry(0.22, 8, 6), M('#ffd080', { e: '#ff9a30', ei: 3 }), x, 2.3, z, 0, 0, 0, 1, 1, 1, false); }
   B.build(grp);
   return {
     id: 'dungeon', name: '天然要害沙斯塔夏溶洞', sub: '', en: 'SASTASHA', music: 'dungeon', group: grp, walk: W, dungeon: true,

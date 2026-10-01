@@ -73,6 +73,7 @@ export const Combat = {
     enemy.enmity.set(src.id, (enemy.enmity.get(src.id) || 0) + amt * m);
   },
   topEnmity(enemy) {
+    if (enemy.net) return enemy.target && !enemy.target.dead ? enemy.target : null; // 联机：服务器同步的当前目标
     let best = null, bv = -1;
     for (const [id, v] of enemy.enmity) { const e = G.entities.find((x) => x.id === id); if (!e || e.dead) { enemy.enmity.delete(id); continue; } if (v > bv) { bv = v; best = e; } }
     return best;
@@ -162,8 +163,10 @@ export const Combat = {
       if (near) { if (src === G.player && this.on.setTarget) this.on.setTarget(near); return near; }
       return null;
     }
-    if (sk.target === 'ally') return t && t.faction === 'party' && !t.dead ? t : src;
-    if (sk.target === 'dead') return t && t.faction === 'party' && t.dead ? t : null;
+    // 联机时也可以治疗、复活野外的其他冒险者
+    const friend = t && (t.faction === 'party' || (G.online && t.kind === 'remote'));
+    if (sk.target === 'ally') return friend && !t.dead ? t : src;
+    if (sk.target === 'dead') return friend && t.dead ? t : null;
     return src;
   },
   use(src, sk) {
@@ -205,6 +208,7 @@ export const Combat = {
   },
   interrupt(e, silent) {
     if (!e.casting) return; e.casting.circle && e.casting.circle.remove(); e.model.setLoop(null);
+    if (G.online && e === G.player && e.casting.sk && this.on.netInterrupt) this.on.netInterrupt();
     if (e.casting.tele) e.casting.tele.forEach((t) => (t.cancel = true));
     if (e.faction === 'party' && e.casting.sk && e.casting.sk.gcd) e.gcd = 0;
     e.casting = null; if (!silent && e === G.player) G.ui.error('咏唱中断');
@@ -361,7 +365,7 @@ export const Combat = {
     if (this.stack) this.updateStack(dt);
     if (this.bossScript) this.bossScript.update(dt);
   },
-  anyCombat() { for (const e of G.entities) if (e.faction === 'enemy' && e.inCombat && !e.dead) return true; return false; },
+  anyCombat() { if (G.online && this.on.netCombat) return this.on.netCombat(); for (const e of G.entities) if (e.faction === 'enemy' && e.inCombat && !e.dead) return true; return false; },
   // ---------- 移动工具 ----------
   moveToward(e, tx, tz, speed, dt, stopDist = 0.3) {
     const dx = tx - e.pos.x, dz = tz - e.pos.z, d = Math.hypot(dx, dz);

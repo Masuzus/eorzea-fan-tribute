@@ -5,6 +5,8 @@ import { Combat, bossScript } from './combat.js';
 import { VFX } from './vfx.js';
 import { UI, icon, roleIcon } from './ui.js';
 import { QUESTS, NPCS, ALLIES, JOBS, ITEMS, expToNext, MAX_LEVEL, weaponItem } from './data.js';
+import { Online } from './online.js';
+import { Net } from './net.js';
 
 const PI = Math.PI, V3 = THREE.Vector3;
 const Q = () => G.save.quests;
@@ -164,7 +166,7 @@ export const Story = {
   gatherActive() { const st = Q().s3; return st && st.status === 'active' && st.step === 0; },
   extraInteract(P) {
     if (G.zone.id === 'field') for (const g of this.gathers) if (g.active && Math.hypot(P.pos.x - g.x, P.pos.z - g.z) < 2.6) return { kind: 'run', label: '采集 基萨尔野菜', run: () => this.gather(g) };
-    if (G.duty && G.duty.chest && !G.duty.chest.opened && Math.hypot(P.pos.x, P.pos.z + 226) < 3.5) return { kind: 'run', label: '打开宝箱', run: () => this.openChest() };
+    if (G.duty && G.duty.chest && !G.duty.chest.opened && Math.hypot(P.pos.x, P.pos.z + 226) < 3.5) return { kind: 'run', label: '打开宝箱', run: () => (G.online ? Online.openChest() : this.openChest()) };
     return null;
   },
   async gather(g) {
@@ -179,22 +181,29 @@ export const Story = {
   onKill(e, src) {
     const P = G.player; G.save.stats.kills++;
     const party = Combat.party().map((x) => x.id); const mine = [...e.enmity.keys()].some((id) => party.includes(id)) || src === P;
-    if (mine && !e.def.passiveAdd) {
-      const diff = P.level - e.level; const mul = diff > 5 ? 0.2 : diff < -3 ? 1.3 : 1;
-      this.gainExp(Math.round((25 + e.level * 12) * (e.boss ? 6 : e.def.fateBoss ? 4 : 1) * mul));
-      for (const q of this.sorted()) {
-        const st = Q()[q.id]; if (!st || st.status !== 'active') continue; const s = q.steps[st.step];
-        if (s && s.type === 'kill' && s.mob === e.mobKind) { st.count++; UI.chat(`${s.text} ${Math.min(st.count, s.count)}/${s.count}`, 'quest'); UI.dirtyQuests = true; if (st.count >= s.count) this.advance(q); }
-      }
-    }
+    if (mine) this.credit({ mobKind: e.mobKind, level: e.level, boss: e.boss, fateBoss: !!e.def.fateBoss, passiveAdd: !!e.def.passiveAdd, local: true });
     if (e.fate && G.fate) this.fateKill(e);
     if (G.duty) this.dutyKill(e);
   },
-  onRemoved(e) { if (e.group && G.zone && G.zone.id === 'field') Combat.later(rand(18, 30), () => { if (G.zone && G.zone.id === 'field') G.game.spawnFieldMob(e.group); }); },
+  // 击杀记功：经验值与讨伐任务计数（联机时由服务器判定是否参与了战斗）
+  credit(k) {
+    const P = G.player;
+    if (!k.local) G.save.stats.kills++;
+    if (k.mobKind === 'chopper' && !k.local) G.game.addItem('shell');
+    if (k.passiveAdd) return;
+    const diff = P.level - k.level; const mul = diff > 5 ? 0.2 : diff < -3 ? 1.3 : 1;
+    this.gainExp(Math.round((25 + k.level * 12) * (k.boss ? 6 : k.fateBoss ? 4 : 1) * mul));
+    for (const q of this.sorted()) {
+      const st = Q()[q.id]; if (!st || st.status !== 'active') continue; const s = q.steps[st.step];
+      if (s && s.type === 'kill' && s.mob === k.mobKind) { st.count++; UI.chat(`${s.text} ${Math.min(st.count, s.count)}/${s.count}`, 'quest'); UI.dirtyQuests = true; if (st.count >= s.count) this.advance(q); }
+    }
+  },
+  onRemoved(e) { if (!e.net && e.group && G.zone && G.zone.id === 'field') Combat.later(rand(18, 30), () => { if (G.zone && G.zone.id === 'field') G.game.spawnFieldMob(e.group); }); },
   async onPlayerDeath() {
     G.save.stats.deaths++; UI.banner('death', '无法战斗', 'KNOCKED OUT');
     if (G.duty) { UI.chat(Combat.party().some((x) => !x.dead && x.role === 'healer') ? '等待治疗职业的复活……' : '你陷入了无法战斗状态。', 'system'); return; }
     await sleep(2200);
+    if (!G.player || !G.player.dead) return; // 期间已被其他冒险者复活
     const A = G.save.attuned; const toField = G.zone.id === 'field' && A.summerford;
     await UI.modal('dead', '无法战斗', `<p style="margin:0;line-height:1.8">你陷入了无法战斗状态。<br>要返回${toField ? '以太之晶「盛夏农庄」' : '利姆萨·罗敏萨的以太之光'}吗？</p>`, [{ text: '返回返回点', primary: true }]);
     const P = G.player; Combat.revive(P, 0.5); G.game.loadZone(toField ? 'field' : 'town', 'aetheryte');
@@ -316,10 +325,25 @@ export const Story = {
   updateFate(dt) {
     const Z = G.zone; if (!Z || Z.id !== 'field' || G.state !== 'play') return;
     const P = G.player; const d = Math.hypot(P.pos.x - Z.fate.x, P.pos.z - Z.fate.z);
-    if (!G.fate) { this.fateCD -= dt; if (this.fateCD <= 0 && d < 75 && G.save.level >= 3) this.startFate(); return; }
+    if (!G.fate) { if (G.online) return; this.fateCD -= dt; if (this.fateCD <= 0 && d < 75 && G.save.level >= 3) this.startFate(); return; }
     const F = G.fate; F.t -= dt; F.uiT -= dt; const inside = d < Z.fate.r + 12; if (inside) F.joined = true;
-    if (F.uiT <= 0) { F.uiT = 0.3; UI.fateInfo(`<h4>沙哈金族的奇袭<span class="num">${fmtT(F.t)}</span></h4><div class="muted" style="font-size:12px">击退袭击东部海滩的沙哈金族！</div><div class="fbar"><i style="width:${F.p}%"></i></div><div style="font-size:12px;display:flex;justify-content:space-between"><span>进度 ${F.p}%</span><span style="color:${inside ? '#9affc8' : '#aaa'}">${inside ? '参加中' : '范围外'}</span></div>`); }
-    if (F.t <= 0) this.endFate(false);
+    if (F.uiT <= 0) { F.uiT = 0.3; UI.fateInfo(`<h4>沙哈金族的奇袭<span class="num">${fmtT(F.t)}</span></h4><div class="muted" style="font-size:12px">击退袭击东部海滩的沙哈金族！${F.net ? '（所有冒险者共同参加）' : ''}</div><div class="fbar"><i style="width:${F.p}%"></i></div><div style="font-size:12px;display:flex;justify-content:space-between"><span>进度 ${F.p}%</span><span style="color:${inside ? '#9affc8' : '#aaa'}">${inside ? '参加中' : '范围外'}</span></div>`); }
+    if (F.t <= 0 && !F.net) this.endFate(false);
+  },
+  // 联机 FATE：开始、进度、结束都由服务器广播
+  netFate(e) {
+    if (e.s === 'start') {
+      G.fate = { t: e.t, p: e.p, uiT: 0, joined: false, net: true };
+      if (!e.quiet) { UI.banner('fate', 'FATE 开始', '沙哈金族的奇袭'); Audio.sfxPlay('duty'); }
+      else UI.chat('FATE「沙哈金族的奇袭」正在进行中！地点：拉诺西亚低地 东部海滩', 'fate');
+    } else if (e.s === 'upd') { if (G.fate) { G.fate.t = e.t; G.fate.p = e.p; } }
+    else if (e.s === 'end') {
+      G.fate = null; UI.fateInfo(null);
+      if (e.ok) {
+        UI.banner('fate', 'FATE 完成', '金牌 · GOLD RATING'); Audio.sfxPlay('fanfare');
+        if ((e.cr || []).includes(Net.id)) { this.gainExp(1200); G.save.gil += 300; UI.chat('获得了300金币。', 'loot'); }
+      } else UI.banner('fate', 'FATE 失败', 'FAILED');
+    }
   },
   startFate() {
     const L = clamp(G.save.level, 6, 9);
@@ -348,6 +372,11 @@ export const Story = {
   queueDuty() {
     if (G.zone.dungeon) { UI.error('已经在任务中'); return; }
     const st = Q().q5; if (!(st && st.status === 'active' && st.step === 0) && !G.save.flags.sastasha) { UI.error('尚未解锁此任务'); return; }
+    // 能连上联机服务器时与其他冒险者匹配，否则与亲信战友出发
+    if (Net.url) { Online.queue(() => this.queueLocal()); return; }
+    this.queueLocal();
+  },
+  queueLocal() {
     if (this.queued) return; this.queued = true;
     UI.chat('已申请参加「天然要害沙斯塔夏溶洞」。正在匹配亲信战友……', 'system'); Audio.sfxPlay('confirm');
     setTimeout(async () => {
@@ -361,7 +390,8 @@ export const Story = {
   },
   dutySetup() {
     const L = Math.max(1, G.save.level);
-    G.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, complete: false, chest: null, wipeT: 0, uiT: 0, seen: {} };
+    G.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, complete: false, chest: null, wipeT: 0, uiT: 0, seen: {}, net: G.online };
+    if (G.online) return; // 联机副本：魔物、头目与亲信战友都由服务器生成
     let slot = 1; for (const k of this.partyPlan()) if (k !== 'player') G.game.spawnAlly(k, slot++);
     const pack = (list) => { const ms = list.map(([k, x, z]) => G.game.spawnMob(k, L, x, z, { wanderR: 1.5, rot: 0, aggroR: 9 })); ms.forEach((m) => (m.pack = ms)); return ms; };
     pack([['pirate', 0, -46], ['pirate2', -4, -53], ['pirate', 4, -54]]);
@@ -418,19 +448,69 @@ export const Story = {
   },
   dutyComplete() {
     const D = G.duty; D.complete = true;
-    setTimeout(() => { UI.banner('duty', '任务完成', 'DUTY COMPLETE'); Audio.sfxPlay('fanfare'); for (const m of Combat.party()) { if (m.dead) Combat.revive(m, 0.5); m.model.play('victory', 2.5); } }, 1200);
+    setTimeout(() => { UI.banner('duty', '任务完成', 'DUTY COMPLETE'); Audio.sfxPlay('fanfare'); for (const m of Combat.party()) { if (m.dead && !D.net) Combat.revive(m, 0.5); if (m.kind !== 'remote') m.model.play('victory', 2.5); } }, 1200);
     G.save.flags.sastasha = true;
     const st = Q().q5; if (st && st.status === 'active' && st.step === 0) this.advance(QUESTS.q5);
     this.gainExp(1000);
-    const g = new THREE.Group(); g.position.set(0, 0, -226);
+    if (!D.net) { this.makeChest(0, -226); UI.chat('宝箱出现了！调查宝箱获得战利品，之后可以通过右侧「离开任务」按钮返回。', 'quest'); }
+  },
+  makeChest(x, z, opened) {
+    const D = G.duty; if (!D || D.chest) return;
+    const g = new THREE.Group(); g.position.set(x, 0, z);
     const wood = new THREE.MeshStandardMaterial({ color: '#8a4a2a', roughness: 0.6 }), gold = new THREE.MeshStandardMaterial({ color: '#e8c050', metalness: 0.9, roughness: 0.3, emissive: '#5a3a00', emissiveIntensity: 0.5 });
     const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 0.9), wood); base.position.y = 0.4; g.add(base);
     const lid = new THREE.Group(); lid.position.set(0, 0.8, -0.45); const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.4, 12, 1, false, 0, PI), wood); lm.rotation.z = PI / 2; lm.position.z = 0.45; lid.add(lm); g.add(lid);
     for (const x of [-0.6, 0, 0.6]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.82, 0.92), gold); b.position.set(x, 0.4, 0); g.add(b); }
     g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-    G.zone.group.add(g); D.chest = { g, lid, opened: false };
-    VFX.pillar(new V3(0, 0, -226), '#ffe070', 8, 1.5, 1.4);
-    UI.chat('宝箱出现了！调查宝箱获得战利品，之后可以通过右侧「离开任务」按钮返回。', 'quest');
+    G.zone.group.add(g); D.chest = { g, lid, opened: !!opened };
+    if (opened) lid.rotation.x = -1.9; else VFX.pillar(new V3(x, 0, z), '#ffe070', 8, 1.5, 1.4);
+  },
+  // 联机副本的进度事件
+  netDuty(e) {
+    const D = G.duty; if (!D) return;
+    switch (e.s) {
+      case 'engage': Audio.play('boss'); break;
+      case 'complete': if (!D.complete) this.dutyComplete(); break;
+      case 'chest':
+        this.makeChest(e.x, e.z, e.op);
+        if (!e.quiet) UI.chat('宝箱出现了！任何一名队员打开宝箱后，全队一起分配战利品。', 'quest');
+        break;
+      case 'loot': this.netLoot(e); break;
+      case 'roll': this.netRoll(e); break;
+      case 'wipe': this.netWipe(); break;
+    }
+  },
+  netLoot(e) {
+    const D = G.duty; if (!D.chest) this.makeChest(0, -226);
+    if (!D.chest.opened) { D.chest.opened = true; G.game.tween(0.8, (u) => { D.chest.lid.rotation.x = -u * 1.9; }); Audio.sfxPlay('loot'); VFX.burst(new V3(0, 1.2, -226), '#ffe070', 40, { speed: 4, size: 0.4 }); }
+    const by = Online.byId(e.by); if (by && by !== G.player) UI.chat(`${by.name}打开了宝箱。`, 'loot');
+    const items = e.items.map((x) => ({ ...x, it: G.game.itemById(x.id) })).filter((x) => x.it);
+    const rows = items.map((x) => `<div class="li" data-i="${x.i}"><img src="${icon(x.it.icon, 64)}" alt=""><div class="nm"><b>${esc(x.it.name)}</b><small>物品等级 ${x.it.ilvl}${x.it.job ? ' · ' + JOBS[x.it.job].name + '专用' : ''}</small></div><div class="rolls"><button class="btn primary" data-r="need">需求</button><button class="btn" data-r="greed">贪婪</button><button class="btn ghost" data-r="pass">放弃</button></div></div>`).join('');
+    let sec = 30;
+    UI.modal('loot', '战利品分配', `<div class="loot">${rows}</div><p class="desc">「需求」优先于「贪婪」，点数高者获得物品。全员选择完毕或 <b id="loot-t" class="num">30</b> 秒后开始分配（未选择视为贪婪）。</p>`, [{ text: '确定', primary: true }], {
+      width: '520px', mount: (w, close) => {
+        D.closeLoot = close;
+        w.querySelectorAll('.li').forEach((li) => li.querySelectorAll('button').forEach((b) => (b.onclick = () => { Online.loot(+li.dataset.i, b.dataset.r); li.querySelectorAll('button').forEach((x) => (x.disabled = x !== b)); Audio.sfxPlay('click'); })));
+        const iv = setInterval(() => { sec--; const el = w.querySelector('#loot-t'); if (!w.isConnected || sec <= 0) { clearInterval(iv); if (w.isConnected) close(0); return; } if (el) el.textContent = sec; }, 1000);
+      },
+    });
+  },
+  netRoll(e) {
+    const D = G.duty; if (D.closeLoot) { const f = D.closeLoot; D.closeLoot = null; f(0); }
+    const it = G.game.itemById(e.id), name = it ? it.name : e.name;
+    for (const r of e.rolls) {
+      const who = r.id === Net.id ? '你' : r.n;
+      UI.chat(r.c === 'pass' ? `${who}放弃了「${name}」。` : `${who}为「${name}」投掷了${r.c === 'need' ? '需求' : '贪婪'}骰子，点数为${r.v}。`, 'loot');
+    }
+    if (e.win === Net.id && it) { if (it.type === 'weapon') this.giveWeapon(2); else { G.game.addItem(it.id); G.game.equip(it.id); } G.game.save(); }
+    else if (e.wn) UI.chat(`${e.wn}获得了「${name}」。`, 'loot');
+    else UI.chat(`没有人获得「${name}」。`, 'loot');
+  },
+  async netWipe() {
+    UI.banner('death', '全员倒下', 'PARTY WIPED');
+    await UI.fade(true, false, 300);
+    G.player.rot = PI; G.cam.yaw = PI; G.game.snapCamera(); Audio.play('dungeon');
+    await UI.fade(false);
   },
   async openChest() {
     const D = G.duty; if (D.chest.opened) return; D.chest.opened = true;
@@ -462,14 +542,15 @@ export const Story = {
     const P = G.player; const areas = [['b1', 0, -94, 16, '隐秘码头', 'THE HIDDEN DOCK'], ['b2', 0, -176, 16, '海盗甲板', 'THE PIRATE DECK'], ['b3', 0, -222, 17, '虎鲸之穴', "THE ORCATOOTH'S DEN"]];
     for (const [id, x, z, r, n, en] of areas) if (!D.seen[id] && Math.hypot(P.pos.x - x, P.pos.z - z) < r + 4) { D.seen[id] = true; UI.zoneTitle(n, '', en); }
     // 团灭
-    if (!D.wiping && Combat.party().every((m) => m.dead)) { D.wipeT += dt; if (D.wipeT > 2.5) this.wipe(); } else D.wipeT = 0;
+    if (!D.net) { if (!D.wiping && Combat.party().every((m) => m.dead)) { D.wipeT += dt; if (D.wipeT > 2.5) this.wipe(); } else D.wipeT = 0; }
     // 玩家倒下且没有可复活的治疗职业时，提供在检查点复活
     if (P.dead && !D.wiping && !Combat.party().some((m) => !m.dead && m.role === 'healer' && m !== P)) {
       D.deadT = (D.deadT || 0) + dt;
       if (D.deadT > 6 && !D.asking && Combat.party().some((m) => !m.dead)) {
         D.asking = true;
-        UI.modal('revive', '无法战斗', '<p style="margin:0;line-height:1.8">队伍中没有能够复活你的治疗职业。<br>要在最近的检查点重新站起来吗？</p>', [{ text: '在检查点复活', primary: true }]).then(() => {
-          D.asking = false; D.deadT = 0; if (!P.dead) return;
+        UI.modal('revive', '无法战斗', '<p style="margin:0;line-height:1.8">队伍中没有能够复活你的治疗职业。<br>要在最近的检查点重新站起来吗？</p>', [{ text: '在检查点复活', primary: true }], { mount: (w, close) => { D.closeRevive = close; } }).then((i) => {
+          D.asking = false; D.deadT = 0; D.closeRevive = null; if (!P.dead || i < 0) return;
+          if (D.net) { Online.checkpoint(); return; }
           const cp = D.done.madison ? [0, -196] : D.done.chopper ? [0, -114] : [0, -4];
           Combat.revive(P, 0.6); P.pos.set(cp[0], 0, cp[1]); G.game.snapCamera();
         });

@@ -1,9 +1,11 @@
-// 联机：连接所在地图的房间，同步其他玩家的外观、位置、坐骑、动作、情感动作与聊天（战斗与任务仍为单人）
+// 联机：连接所在地图的房间，同步其他玩家的外观、位置、坐骑、动作、情感动作与聊天。
+// 野外与副本实例的房间还运行服务器战斗模拟，战斗消息交给 online.js 处理。
 import { G, angDiff } from './engine.js';
 import { Humanoid, buildModel, gearFor } from './character.js';
 import { Entity } from './combat.js';
 import { UI } from './ui.js';
 import { JOBS, EMOTES } from './data.js';
+import { Online } from './online.js';
 import { NET_ZONES, MAX_MSG, ANIMS, LOOPS, cleanState, cleanLook, cleanText } from './protocol.js';
 
 const TAU = Math.PI * 2;
@@ -24,12 +26,13 @@ export const Net = {
   url: endpoint(), ws: null, zone: null, id: null, status: 'off', fails: 0, everOpen: false, timer: null,
   remotes: new Map(), sendT: 0, lastSig: '', lastSend: 0, lookSig: '', lookT: 0, cullT: 0, actTimes: [],
 
-  enter(zone) {
-    this.close(); this.zone = zone;
+  enter(zone, opts = {}) {
+    this.close(); this.opened = false; this.zone = zone; this.inst = opts.inst || null; this.tk = opts.tk || '';
     if (!this.url) return this.setStatus('offline');
-    if (!NET_ZONES.includes(zone)) return this.setStatus('solo');
+    if (!this.netZone()) return this.setStatus('solo');
     this.fails = 0; this.connect();
   },
+  netZone() { return NET_ZONES.includes(this.zone) || (this.zone === 'dungeon' && !!this.inst); },
   leave() { this.zone = null; this.close(); this.setStatus('off'); },
   close() {
     clearTimeout(this.timer); this.timer = null; clearInterval(this.hb);
@@ -40,10 +43,10 @@ export const Net = {
   connect() {
     this.setStatus(this.everOpen ? 'reconnecting' : 'connecting');
     let ws;
-    try { ws = new WebSocket(`${this.url}?zone=${this.zone}`); } catch { return this.retry(); }
+    try { ws = new WebSocket(`${this.url}?zone=${this.zone}${this.inst ? '&inst=' + this.inst : ''}`); } catch { return this.retry(); }
     this.ws = ws;
     ws.onopen = () => {
-      if (this.ws !== ws) return; this.everOpen = true; this.fails = 0; ws.send(JSON.stringify({ t: 'hello', ...this.look(), ...this.localState() }));
+      if (this.ws !== ws) return; this.everOpen = this.opened = true; this.fails = 0; ws.send(JSON.stringify({ t: 'hello', ...this.look(), ...this.localState(), hp: G.player.hp, mp: G.player.mp, tk: this.tk }));
       // 心跳用定时器发送：页面在后台时 requestAnimationFrame 会暂停，但定时器仍会运行
       clearInterval(this.hb); this.hb = setInterval(() => this.send({ t: 'p' }), 15000);
     };
@@ -52,9 +55,9 @@ export const Net = {
     ws.onerror = () => { };
   },
   retry() {
-    if (!this.zone || !NET_ZONES.includes(this.zone)) return;
+    if (!this.zone || !this.netZone()) return;
     this.fails++;
-    if (!this.everOpen && this.fails >= 2) return this.setStatus('offline');
+    if (!this.opened && this.fails >= 2) { this.setStatus('offline'); Online.fallback(); return; }
     this.setStatus('reconnecting');
     this.timer = setTimeout(() => { if (this.zone && !this.ws) this.connect(); }, Math.min(30, 2 ** this.fails) * 1000);
   },
@@ -62,7 +65,7 @@ export const Net = {
   send(obj) { if (!this.ws || this.ws.readyState !== 1 || !this.id) return; const s = JSON.stringify(obj); if (s.length <= MAX_MSG) this.ws.send(s); },
 
   // ---------- 本地 → 服务器 ----------
-  look() { const S = G.save; return { name: S.name, app: S.app, job: S.job, lv: S.level, body: S.gear.body || 'body1' }; },
+  look() { const S = G.save; return { name: S.name, app: S.app, job: S.job, lv: S.level, body: S.gear.body || 'body1', wt: S.weaponTier || 0, ear: S.gear.ear ? 1 : 0 }; },
   localState() {
     const P = G.player, q = (v) => Math.round(v * 100) / 100;
     return { x: q(P.pos.x), y: q(P.pos.y), z: q(P.pos.z), r: q(((P.rot % TAU) + TAU) % TAU), sp: q(P.moveSpeed || 0), m: P.mounted ? 1 : 0, a: P.air ? 1 : 0, d: P.model.drawn ? 1 : 0, e: LOOPS.includes(P.model.loop) ? P.model.loop : '' };
@@ -84,13 +87,18 @@ export const Net = {
     switch (m.t) {
       case 'welcome': {
         this.id = m.id; this.clearRemotes();
+        if (m.sim) Online.begin(m.sim);
         (Array.isArray(m.players) ? m.players : []).forEach((p) => this.addRemote(p, false));
         this.lastSig = ''; this.lookSig = JSON.stringify(this.look()); this.setStatus('online');
         const n = this.remotes.size;
-        UI.chat(`已连接到「${G.zone.name}」。${n ? `这里还有 ${n} 名其他冒险者。` : '目前只有你一个人，邀请朋友打开同一个网址就能互相看见。'}`, 'system');
+        if (G.zone.dungeon) UI.chat(n ? `已与 ${n} 名冒险者组成小队，其余位置由亲信战友补上。` : '小队成员尚未到齐，空缺的位置将由亲信战友补上。', 'system');
+        else UI.chat(`已连接到「${G.zone.name}」。${n ? `这里还有 ${n} 名其他冒险者。` : '目前只有你一个人，邀请朋友打开同一个网址就能互相看见。'}${G.online ? '魔物与 FATE 由服务器同步，可以与其他冒险者一起战斗。' : ''}`, 'system');
         break;
       }
-      case 'join': if (m.p && m.p.id !== this.id) { this.addRemote(m.p, true); this.setStatus('online'); } break;
+      case 'w': Online.onWorld(m); break;
+      case 'sync': if (m.sim) Online.begin(m.sim); break;
+      case 'gone': this.zone = null; this.close(); Online.gone(); break;
+      case 'join': if (m.p && m.p.id !== this.id) { this.addRemote(m.p, true); this.setStatus('online'); if (G.zone.dungeon) UI.chat(`${cleanText(m.p.name, 16)}加入了小队。`, 'system'); } break;
       case 'leave': this.removeRemote(m.id); this.setStatus('online'); break;
       case 's': if (r) this.applyState(r, cleanState(m)); break;
       case 'look': if (r) this.applyLook(r, cleanLook(m)); break;
@@ -117,6 +125,7 @@ export const Net = {
     const e = new Entity({ name: look.name, title: `${JOBS[look.job].name} Lv${look.lv}`, kind: 'remote', faction: 'remote', model, x: st.x, y: st.y, z: st.z, rot: st.r, height: model.height, radius: 0.45, level: look.lv, netId: p.id });
     e.hp = e.maxHp = 1; e.look = look;
     G.game.addEntity(e); this.remotes.set(p.id, e);
+    Online.onRemoteAdded(e);
     this.applyState(e, st);
     if (announce) UI.chat(`${look.name}来到了这里。`, 'system');
   },
@@ -129,7 +138,7 @@ export const Net = {
   clearRemotes() { for (const id of [...this.remotes.keys()]) this.removeRemote(id); },
   applyLook(e, look) {
     const same = JSON.stringify(look.app) === JSON.stringify(e.look.app) && look.job === e.look.job && look.body === e.look.body;
-    e.look = look; e.name = look.name; e.level = look.lv; e.title = `${JOBS[look.job].name} Lv${look.lv}`;
+    e.look = look; e.name = look.name; e.level = look.lv; e.title = `${JOBS[look.job].name} Lv${look.lv}`; e.job = look.job; if (e.faction === 'party') e.role = JOBS[look.job].role;
     if (!same) { const d = e.model.drawn; e.model.build(look.app, gearFor(look.job, look.body)); e.model.setDrawn(d, true); e.height = e.model.height; }
   },
   applyState(e, st) {

@@ -4,6 +4,7 @@ import { Audio } from './audio.js';
 import { JOBS, GENERAL, EMOTES, RACES, SKINS, HAIR_COLORS, EYE_COLORS, PAINT_COLORS, SCALE_COLORS, DEITIES, MONTHS, QUESTS, ITEMS, NPCS, expToNext, MAX_LEVEL } from './data.js';
 import { Combat } from './combat.js';
 import { fieldH, dRoad } from './zones.js';
+import { Online } from './online.js';
 
 const $ = (id) => document.getElementById(id);
 const PI = Math.PI;
@@ -486,7 +487,7 @@ export const UI = {
     $('enmity').style.top = 14 + (list.length * 58 + 10) * (this.uiScale || 1) + 'px';
   },
   updateEnmity() {
-    const box = $('enmity'); const en = Combat.enemies().filter((e) => e.inCombat && e.enmity.has(G.player.id)).slice(0, 6);
+    const box = $('enmity'); const en = Combat.enemies().filter((e) => (e.net ? Online.mine(e) : e.inCombat && e.enmity.has(G.player.id))).slice(0, 6);
     if (!en.length) { box.innerHTML = ''; return; }
     box.innerHTML = '<div class="panel" style="padding:4px 0">' + en.map((e) => { const top = Combat.topEnmity(e); const mine = top === G.player; return `<div class="row"><b style="background:${mine ? '#ff5a4a' : '#ffb03a'}"></b><span style="flex:1">${esc(e.name)}</span><span class="num muted">${Math.round((e.hp / e.maxHp) * 100)}%</span></div>`; }).join('') + '</div>';
   },
@@ -503,7 +504,7 @@ export const UI = {
   fateInfo(html) { const f = $('fate'); if (!html) { f.hidden = true; return; } f.hidden = false; f.innerHTML = html; this.layoutRight(); },
   netStatus(s, count) {
     const el = $('net-status'); if (!el) return;
-    const t = { connecting: '正在连接服务器…', reconnecting: '连接中断，正在重连…', online: `在线 · 本地图 ${count} 名冒险者`, offline: '离线模式（单人游戏）', solo: '副本中（单人）' }[s];
+    const t = { connecting: '正在连接服务器…', reconnecting: '连接中断，正在重连…', online: G.zone && G.zone.dungeon ? `联机副本 · 小队中 ${count} 名冒险者` : `在线 · 本地图 ${count} 名冒险者`, offline: '离线模式（单人游戏）', solo: '副本中（单人）' }[s];
     el.hidden = !t; el.className = 'net num ' + s; el.textContent = t ? '● ' + t : '';
   },
   prompt(text) { const p = $('prompt'); if (!text) { if (!p.hidden) p.hidden = true; return; } if (p.dataset.t !== text) { p.dataset.t = text; p.innerHTML = `<kbd>F</kbd>${esc(text)}`; } p.hidden = false; },
