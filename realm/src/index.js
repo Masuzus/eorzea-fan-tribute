@@ -148,6 +148,7 @@ export class Realm extends DurableObject {
       case 'int': if (W) W.intentInterrupt(me.id); break;
       case 'gen': if (W && ['potion', 'lb', 'rv'].includes(m.g) && this.allow(me.id, 'gen', 3, 1000)) W.intentGeneral(me.id, m.g); break;
       case 'chest': if (W && W.duty) W.openChest(me.id); break;
+      case 'obj': if (W && W.duty && this.allow(me.id, 'obj', 4, 1000)) W.interactObj(me.id, cleanId(m.id)); break;
       case 'loot': if (W && W.duty && this.allow(me.id, 'loot', 6, 1000)) W.lootChoice(me.id, Number(m.i) | 0, m.c); break;
     }
     if (W && !this.timer && Date.now() - this.activeAt < 1000) this.ensureTick(); // 暂停后有人开始操作：恢复模拟

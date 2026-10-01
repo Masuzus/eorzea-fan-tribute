@@ -294,7 +294,7 @@ export const Combat = {
   resolveTele(tel) {
     const victims = this.party().filter((e) => !e.dead && inShape(tel, e.pos.x, e.pos.z, e.radius * 0.4));
     VFX.disc(new THREE.Vector3(tel.x, 0, tel.z), '#ffb070', tel.shape === 'circle' ? tel.r : 3, 0.4);
-    if (tel.shape === 'circle') VFX.ring(new THREE.Vector3(tel.x, 0, tel.z), '#ffd0a0', tel.r, 0.4);
+    if (tel.shape === 'circle') VFX.ring(new THREE.Vector3(tel.x, 0, tel.z), '#ffd0a0', tel.r, 0.4); // 高度由 VFX 按地面取
     if (tel.shape === 'line' || tel.shape === 'cone') { const fx = { shape: tel.shape, pos: new THREE.Vector3(tel.x, 0, tel.z), rot: tel.dir }; if (tel.shape === 'line') VFX.line(fx, '#ffb070', tel.len, tel.width); else VFX.cone(fx, '#ffb070', tel.r, tel.angle); }
     Audio.sfxPlay('aoe', 0.5);
     if (tel.onHit) tel.onHit(victims); else victims.forEach((v) => this.damage(tel.src, v, tel.potency || 300, { name: tel.name, noCrit: true }));
@@ -368,10 +368,18 @@ export const Combat = {
   anyCombat() { if (G.online && this.on.netCombat) return this.on.netCombat(); for (const e of G.entities) if (e.faction === 'enemy' && e.inCombat && !e.dead) return true; return false; },
   // ---------- 移动工具 ----------
   moveToward(e, tx, tz, speed, dt, stopDist = 0.3) {
-    const dx = tx - e.pos.x, dz = tz - e.pos.z, d = Math.hypot(dx, dz);
-    if (d <= stopDist) { e.moveSpeed = 0; return true; }
-    const step = Math.min(d - stopDist * 0.5, speed * dt), nx = e.pos.x + (dx / d) * step, nz = e.pos.z + (dz / d) * step;
+    const fd = Math.hypot(tx - e.pos.x, tz - e.pos.z);
+    if (fd <= stopDist) { e.moveSpeed = 0; return true; }
     const Z = G.zone, r = e.radius * 0.6;
+    // 溶洞里绕过拐角：看不到目标时先走向路点（与服务器的战斗模拟相同）
+    let gx = tx, gz = tz;
+    if (Z.nav) {
+      e.navT = (e.navT || 0) - dt;
+      if (e.navT <= 0 || !e.navGoal || Math.hypot(e.navGoal[0] - tx, e.navGoal[1] - tz) > 2) { e.navT = 0.35; e.navGoal = [tx, tz]; e.navWp = Z.nav.step(e.pos.x, e.pos.z, tx, tz); }
+      if (e.navWp) { if (Math.hypot(e.navWp[0] - e.pos.x, e.navWp[1] - e.pos.z) < 0.8) e.navT = 0; else { gx = e.navWp[0]; gz = e.navWp[1]; } }
+    }
+    const dx = gx - e.pos.x, dz = gz - e.pos.z, d = Math.hypot(dx, dz) || 1e-6;
+    const step = Math.min(gx === tx && gz === tz ? fd - stopDist * 0.5 : d, speed * dt), nx = e.pos.x + (dx / d) * step, nz = e.pos.z + (dz / d) * step;
     const ok = (x, z) => Z.canWalk(x, z, Math.min(r, 0.5)) || Z.canWalk(e.pos.x, e.pos.z, Math.min(r, 0.5)) === false;
     if (ok(nx, nz)) { e.pos.x = nx; e.pos.z = nz; } else if (ok(nx, e.pos.z)) e.pos.x = nx; else if (ok(e.pos.x, nz)) e.pos.z = nz;
     const h = Z.heightAt(e.pos.x, e.pos.z); if (h !== null) e.pos.y = h;
@@ -406,7 +414,9 @@ export const Combat = {
     if (!en.length) {
       a.drawnT = Math.max(0, (a.drawnT || 0) - dt); if (a.drawnT <= 0) a.model.setDrawn && a.model.setDrawn(false);
       const idx = a.slot || 1, back = P.forward().multiplyScalar(-2.4), side = new THREE.Vector3(Math.cos(P.rot), 0, -Math.sin(P.rot)).multiplyScalar((idx - 2) * 1.8);
-      const tx = P.pos.x + back.x + side.x, tz = P.pos.z + back.z + side.z;
+      let tx = P.pos.x + back.x + side.x, tz = P.pos.z + back.z + side.z;
+      // 站位点在墙里（狭窄的通道、跳板）时就跟在领队正后方
+      if (!G.zone.canWalk(tx, tz, 0.4)) { tx = P.pos.x + back.x * 0.5; tz = P.pos.z + back.z * 0.5; if (!G.zone.canWalk(tx, tz, 0.4)) { tx = P.pos.x; tz = P.pos.z; } }
       const d = Math.hypot(tx - a.pos.x, tz - a.pos.z);
       if (d > 25) { a.pos.set(tx, P.pos.y, tz); }
       if (d > 1.2) this.moveToward(a, tx, tz, d > 6 ? (P.mounted ? 11 : 7.5) : 4, dt, 0.6); else { a.moveSpeed = 0; a.rot += angDiff(a.rot, P.rot) * dt * 3; }
@@ -607,7 +617,7 @@ export function bossScript(boss, api) {
     madison: [
       [2, () => { if (!boss.addsSpawned) { boss.addsSpawned = true; api.spawnAdds(boss, 2); C.log('麦迪逊船长：「小的们！给我上！」', 'npc'); } }],
       [7, () => { const tel = C.aoe(boss, { shape: 'circle', x: boss.pos.x, z: boss.pos.z, r: 8 }, 3.5, null, { potency: 420, name: '旋风斩' }); tel.follow = boss; C.startEnemyCast(boss, '旋风斩', 3.5, [tel], () => boss.model.play('spin', 0.7), { anim: 'spin' }); }],
-      [15, () => { const tels = []; const base = rand(0, PI); for (let i = 0; i < 3; i++) { const a = base + i * PI / 3; const cx = boss.spawn.x, cz = boss.spawn.z, off = (i - 1) * 9; const ox = cx + Math.cos(a) * off - Math.sin(a) * 18, oz = cz - Math.sin(a) * off - Math.cos(a) * 18; tels.push(C.aoe(boss, { shape: 'line', x: ox, z: oz, len: 36, width: 5, dir: a }, 4, null, { potency: 400, name: '炮火齐射' })); } C.log('麦迪逊船长：「开炮！把他们轰成碎片！」', 'npc'); C.startEnemyCast(boss, '炮火齐射', 4, tels, () => { tels.forEach((tl) => { for (let k = 0; k < 5; k++) VFX.fire(new THREE.Vector3(tl.x + Math.sin(tl.dir) * k * 7, 1, tl.z + Math.cos(tl.dir) * k * 7), 0.8); }); Audio.sfxPlay('fire'); }, { anim: 'point' }); }],
+      [15, () => { const tels = []; const base = rand(0, PI); for (let i = 0; i < 3; i++) { const a = base + i * PI / 3; const cx = boss.spawn.x, cz = boss.spawn.z, off = (i - 1) * 9; const ox = cx + Math.cos(a) * off - Math.sin(a) * 18, oz = cz - Math.sin(a) * off - Math.cos(a) * 18; tels.push(C.aoe(boss, { shape: 'line', x: ox, z: oz, len: 36, width: 5, dir: a }, 4, null, { potency: 400, name: '炮火齐射' })); } C.log('麦迪逊船长：「开炮！把他们轰成碎片！」', 'npc'); C.startEnemyCast(boss, '炮火齐射', 4, tels, () => { tels.forEach((tl) => { for (let k = 0; k < 5; k++) { const x = tl.x + Math.sin(tl.dir) * k * 7, z = tl.z + Math.cos(tl.dir) * k * 7; VFX.fire(new THREE.Vector3(x, (G.zone.heightAt(x, z) ?? boss.pos.y) + 1, z), 0.8); } }); Audio.sfxPlay('fire'); }, { anim: 'point' }); }],
       [24, () => buster('致命突刺', 460)],
       [30, () => { if (!phase2 && boss.hp < boss.maxHp * 0.55) { phase2 = true; api.spawnAdds(boss, 2); C.log('麦迪逊船长：「援军呢？！都给我出来！」', 'npc'); } const tel = C.aoe(boss, { shape: 'donut', x: boss.pos.x, z: boss.pos.z, rin: 5, r: 16 }, 4, null, { potency: 400, name: '回旋弹幕' }); C.startEnemyCast(boss, '回旋弹幕', 4, [tel], () => boss.model.play('spin', 0.7)); }],
       [37, () => { t = 0; step = 1; }],

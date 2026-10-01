@@ -644,7 +644,7 @@ function nearestInteract() {
   const T = P.target;
   if (T && T.kind === 'npc' && !T.hidden && P.dist(T) < 6) return { kind: 'npc', e: T, label: `交谈 ${T.name}` };
   for (const e of G.entities) if (e.kind === 'npc' && !e.hidden && !e.citizen) { const d = P.dist(e); if (d < 3.6 && d < bd) { bd = d; best = { kind: 'npc', e, label: `交谈 ${e.name}` }; } }
-  for (const it of Z.interacts) { const d = Math.hypot(P.pos.x - it.x, P.pos.z - it.z); if (d < it.r && d < bd + 1) { bd = d; best = { kind: 'obj', it, label: Story.interactLabel(it) }; } }
+  for (const it of Z.interacts) { if (it.off) continue; const d = Math.hypot(P.pos.x - it.x, P.pos.z - it.z); if (d < it.r && d < bd + 1) { bd = d; best = { kind: 'obj', it, label: Story.interactLabel(it) }; } }
   const st = Story.extraInteract(P); if (st) best = st;
   return best;
 }

@@ -7,6 +7,9 @@ import { UI, icon, roleIcon } from './ui.js';
 import { QUESTS, NPCS, ALLIES, JOBS, ITEMS, expToNext, MAX_LEVEL, weaponItem } from './data.js';
 import { Online } from './online.js';
 import { Net } from './net.js';
+import { DUNGEON_PACKS, DUNGEON_BOSSES, DUNGEON_ARENAS, DUNGEON_REGIONS, DUNGEON_CHEST, dungeonCheckpoint, inArena, arenaSpot } from './nav.js';
+import { MOB_RADIUS } from './sim/defs.js';
+const CORAL_CN = { blue: '蓝', red: '红', green: '绿' };
 
 const PI = Math.PI, V3 = THREE.Vector3;
 const Q = () => G.save.quests;
@@ -34,7 +37,7 @@ export const Story = {
     }
     for (const e of Combat.party()) if (e.kb) { const k = e.kb; const step = Math.min(k.t, dt); k.t -= dt; const nx = e.pos.x + k.dx * 20 * step, nz = e.pos.z + k.dz * 20 * step; if (G.zone.canWalk(nx, nz, 0.3)) { e.pos.x = nx; e.pos.z = nz; } if (k.t <= 0) e.kb = null; }
     for (const g of this.gathers) { if (!g.active) { g.respawn -= dt; if (g.respawn <= 0) { g.active = true; g.mesh.visible = true; } continue; } g.mesh.rotation.y += dt; if (this.gatherActive()) VFX.sparkle(new V3(g.x, g.y + 0.3, g.z), '#9aff8a'); }
-    if (G.duty && G.duty.chest && !G.duty.chest.opened) VFX.sparkle(new V3(0, 0.8, -226), '#ffe070');
+    if (G.duty && G.duty.chest && !G.duty.chest.opened) VFX.sparkle(new V3(DUNGEON_CHEST[0], 0.8, DUNGEON_CHEST[1]), '#ffe070');
     this.updateFate(dt); this.updateDuty(dt);
   },
   // ---------- 任务流程 ----------
@@ -152,6 +155,7 @@ export const Story = {
     return it.label;
   },
   async interactObj(it) {
+    if (G.zone && G.zone.dungeon) return this.dungeonObj(it);
     const A = G.save.attuned;
     if (it.id === 'aetheryte') { if (!A.limsa) await this.attuneScene(); else if (Q().q2 && Q().q2.status === 'active' && Q().q2.step === 0) await this.syncAttune(); else UI.toggle('map'); return; }
     if (it.id === 'aetheryte2') {
@@ -166,7 +170,7 @@ export const Story = {
   gatherActive() { const st = Q().s3; return st && st.status === 'active' && st.step === 0; },
   extraInteract(P) {
     if (G.zone.id === 'field') for (const g of this.gathers) if (g.active && Math.hypot(P.pos.x - g.x, P.pos.z - g.z) < 2.6) return { kind: 'run', label: '采集 基萨尔野菜', run: () => this.gather(g) };
-    if (G.duty && G.duty.chest && !G.duty.chest.opened && Math.hypot(P.pos.x, P.pos.z + 226) < 3.5) return { kind: 'run', label: '打开宝箱', run: () => (G.online ? Online.openChest() : this.openChest()) };
+    if (G.duty && G.duty.chest && !G.duty.chest.opened && Math.hypot(P.pos.x - DUNGEON_CHEST[0], P.pos.z - DUNGEON_CHEST[1]) < 3.5) return { kind: 'run', label: '打开宝箱', run: () => (G.online ? Online.openChest() : this.openChest()) };
     return null;
   },
   async gather(g) {
@@ -390,21 +394,71 @@ export const Story = {
   },
   dutySetup() {
     const L = Math.max(1, G.save.level);
-    G.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, complete: false, chest: null, wipeT: 0, uiT: 0, seen: {}, net: G.online };
-    if (G.online) return; // 联机副本：魔物、头目与亲信战友都由服务器生成
+    G.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, complete: false, chest: null, wipeT: 0, uiT: 0, seen: {}, net: G.online, memo: null, doorOpen: { coral: false, switch: false }, ambushed: {}, bosses: {} };
+    if (G.online) return; // 联机副本：魔物、头目与亲信战友都由服务器生成，笔记的颜色也由服务器决定
+    G.duty.memo = pick(['blue', 'red', 'green']);
     let slot = 1; for (const k of this.partyPlan()) if (k !== 'player') G.game.spawnAlly(k, slot++);
     const pack = (list) => { const ms = list.map(([k, x, z]) => G.game.spawnMob(k, L, x, z, { wanderR: 1.5, rot: 0, aggroR: 9 })); ms.forEach((m) => (m.pack = ms)); return ms; };
-    pack([['pirate', 0, -46], ['pirate2', -4, -53], ['pirate', 4, -54]]);
-    pack([['pirate2', -3, -130], ['pirate', 3, -131], ['pirate', 0, -137]]);
-    const b1 = G.game.spawnMob('chopper', L + 1, 0, -97, { rot: 0, noWander: true, aggroR: 13, sealId: 'b1', key: 'chopper' });
-    const b2 = G.game.spawnMob('madison', L + 1, 0, -182, { rot: 0, noWander: true, aggroR: 12, sealId: 'b2', key: 'madison' });
-    const b3 = G.game.spawnMob('denn', L + 2, 0, -247, { rot: 0, noWander: true, aggroR: 31, sealId: 'b3', key: 'denn' });
-    for (const b of [b1, b2, b3]) { b.aggro = true; b.leash = 999; }
-    b3.radius = 9.6; b3.plateH = 7.5;
-    G.duty.bosses = { chopper: b1, madison: b2, denn: b3 };
+    for (const p of DUNGEON_PACKS) pack(p);
+    for (const [kind, x, z, sealId, add, aggroR] of DUNGEON_BOSSES) { const b = G.game.spawnMob(kind, L + add, x, z, { rot: 0, noWander: true, aggroR, sealId, key: kind }); b.aggro = true; b.leash = 999; G.duty.bosses[kind] = b; }
+    const dn = G.duty.bosses.denn; dn.radius = MOB_RADIUS.denn; dn.plateH = 7.5;
+  },
+  // ---- 副本里的调查点：血迹斑斑的笔记、三色珊瑚、藏宝洞的宝箱、隐秘的开关 ----
+  async dungeonObj(it) {
+    const D = G.duty, P = G.player; if (!D) return;
+    if (it.id === 'memo') {
+      if (!D.memo) { UI.error('正在与服务器同步……'); return; }
+      await UI.dialog([['', '（一名冒险者倒在血泊中，手里紧紧攥着一张被血浸透的笔记……）'], ['血迹斑斑的笔记', `……那扇门……只要调查${CORAL_CN[D.memo]}色的珊瑚……就能打开……千万别碰……其他颜色的……`]]);
+      D.memoRead = true; return;
+    }
+    if (it.id.startsWith('coral_')) {
+      const c = it.id.slice(6);
+      if (D.doorOpen.coral) { await UI.dialog([['', '（色彩斑斓的珊瑚。隐藏的门已经打开了。）']]); return; }
+      const i = await UI.choice('', `（一片发着${CORAL_CN[c]}光的珊瑚，深处似乎藏着什么机关……）`, ['调查珊瑚', '离开']);
+      if (i !== 0) return;
+      P.model.play('point', 1.2);
+      if (G.online) { Online.obj(it.id); return; }
+      this.coralResult(c, c === D.memo, P);
+      return;
+    }
+    if (it.id === 'coffer') {
+      if (D.cofferOpened) return;
+      D.cofferOpened = true; it.off = true; P.model.play('point', 1);
+      const lid = G.zone.coffer.userData.lid; G.game.tween(0.7, (u) => { lid.rotation.x = -u * 1.9; });
+      Audio.sfxPlay('loot'); VFX.burst(new V3(G.zone.coffer.position.x, 0.8, G.zone.coffer.position.z), '#ffe070', 24, { speed: 3, size: 0.35 });
+      G.game.addItem('potion', 2); G.save.gil += 120; UI.chat('获得了120金币。', 'loot'); G.game.save();
+      return;
+    }
+    if (it.id === 'switch') {
+      if (D.doorOpen.switch) { await UI.dialog([['', '（开关已经拉下了。下船的栈桥已经打开。）']]); return; }
+      if (!D.done.madison) { UI.error('附近还有敌人，无法调查'); return; }
+      P.model.play('point', 1);
+      if (G.online) { Online.obj('switch'); return; }
+      this.setDoor('switch', true); UI.chat('你拉下了隐秘的开关，下船的栈桥打开了。', 'system');
+    }
+  },
+  coralResult(c, ok, by) {
+    const D = G.duty, Z = G.zone;
+    for (const it of Z.interacts) if (it.id === 'coral_' + c || (ok && it.id.startsWith('coral_'))) it.off = true;
+    if (ok) { if (!G.online) { this.setDoor('coral', true); UI.chat(`你调查了${CORAL_CN[c]}色的珊瑚……隐藏的门打开了！`, 'system'); } return; }
+    D.ambushed[c] = true;
+    if (G.online) return; // 联机时由服务器生成伏兵并广播消息
+    UI.chat(`你调查了${CORAL_CN[c]}色的珊瑚……是陷阱！沙哈金族从水中冒了出来！`, 'battle-warn');
+    const coral = Z.interacts.find((x) => x.id === 'coral_' + c);
+    for (let i = 0; i < 2; i++) {
+      let x = coral.x, z = coral.z; for (let k = 0; k < 20; k++) { const a = rand(0, PI * 2); x = coral.x + Math.cos(a) * 3; z = coral.z + Math.sin(a) * 3; if (Z.canWalk(x, z, 0.6)) break; }
+      const m = G.game.spawnMob('sahagin', Math.max(1, G.save.level), x, z, { wanderR: 2, aggroR: 12 }); VFX.burst(m.hitPos(), '#7ad0ff', 16, { speed: 3 }); Combat.engage(m, by || G.player);
+    }
+  },
+  setDoor(id, open, instant) {
+    const D = G.duty; if (!D) return;
+    D.doorOpen[id] = open; G.zone.setDoor(id, open, instant);
+    if (id === 'switch' && open) for (const it of G.zone.interacts) if (it.id === 'switch') it.off = true;
+    if (id === 'coral' && open) for (const it of G.zone.interacts) if (it.id.startsWith('coral_')) it.off = true;
+    if (!instant) Audio.sfxPlay('seal', 0.8);
   },
   bossEngage(e) {
-    const names = { b1: '隐秘码头', b2: '海盗甲板', b3: '虎鲸之穴' }, nm = names[e.sealId];
+    const A = DUNGEON_ARENAS[e.sealId], nm = A.name;
     UI.chat(`「${nm}」将在5秒后被封锁！`, 'battle-warn'); Audio.play('boss');
     Combat.bossScript = bossScript(e, this.bossApi());
     if (e.key === 'madison') UI.chat('麦迪逊船长：「哪来的老鼠？敢闯我蛇蝎帮的地盘！」', 'npc');
@@ -412,8 +466,7 @@ export const Story = {
     Combat.later(5, () => {
       if (!e.inCombat || e.dead) return;
       G.zone.setSeal(e.sealId, true); Audio.sfxPlay('seal'); UI.chat(`「${nm}」被封锁了！`, 'battle-warn');
-      const c = { b1: [0, -94, 16], b2: [0, -176, 16], b3: [0, -222, 17] }[e.sealId];
-      for (const m of Combat.party()) if (Math.hypot(m.pos.x - c[0], m.pos.z - c[1]) > c[2] - 0.5) { m.pos.set(c[0] + rand(-2, 2), 0, c[1] + c[2] - 3); }
+      for (const m of Combat.party()) if (!inArena(e.sealId, m.pos.x, m.pos.z)) { const x = A.entry[0] + rand(-1.5, 1.5), z = A.entry[1] + rand(-1, 1); m.pos.set(x, G.zone.heightAt(x, z) ?? 0, z); }
     });
   },
   clearBossFight(e, killed) {
@@ -426,10 +479,10 @@ export const Story = {
   bossApi() {
     return {
       markBuster: (tk) => { Combat.fly(tk, '⚠ 死刑', 'status'); VFX.ring(tk.pos, '#ff3a2a', 2.2, 3.4); },
-      spawnAdds: (boss, n) => { for (let i = 0; i < n; i++) { const a = rand(0, PI * 2); const x = boss.spawn.x + Math.cos(a) * 12, z = boss.spawn.z + 6 + Math.sin(a) * 8; const m = G.game.spawnMob('madison_add', boss.level - 1, x, z, { noWander: true }); m.add = true; VFX.burst(m.hitPos(), '#ffb070', 12); const tgt = Combat.party().filter((p) => !p.dead && p.role !== 'tank')[0] || G.player; Combat.engage(m, tgt); m.enmity.set(tgt.id, 50); } },
+      spawnAdds: (boss, n) => { for (let i = 0; i < n; i++) { const [x, z] = arenaSpot(G.zone.walk, boss.sealId); const m = G.game.spawnMob('madison_add', boss.level - 1, x, z, { noWander: true }); m.add = true; VFX.burst(m.hitPos(), '#ffb070', 12); const tgt = Combat.party().filter((p) => !p.dead && p.role !== 'tank')[0] || G.player; Combat.engage(m, tgt); m.enmity.set(tgt.id, 50); } },
       spawnClams: (boss) => {
         for (const sx of [-9, 9]) {
-          const m = G.game.spawnMob('clam', boss.level, sx, -230, { noWander: true, rot: 0 }); m.add = true; Combat.engage(m, G.player); VFX.burst(m.hitPos(), '#ff8ad0', 16);
+          const m = G.game.spawnMob('clam', boss.level, boss.spawn.x + sx, boss.spawn.z + 13, { noWander: true, rot: 0 }); m.add = true; Combat.engage(m, G.player); VFX.burst(m.hitPos(), '#ff8ad0', 16);
           Combat.later(26, () => { if (m.dead || boss.dead) return; m.dead = true; m.deadT = 1.5; m.model.setDead(true); const s = boss.has('empower'); Combat.addStatus(boss, { id: 'empower', name: '海之力', dur: 60, dmgUp: 0.15 * ((s ? s.stacks : 0) + 1), stacks: (s ? s.stacks : 0) + 1, icon: ['drop', '#ff6ab0', '#4a0a2a'] }); VFX.pillar(boss.pos, '#ff6ab0', 12, 1.2, 4); UI.chat('巨蚌释放了海之力！虎鲸牙·丹恩变得更加强大了！', 'battle-warn'); });
         }
       },
@@ -440,9 +493,9 @@ export const Story = {
     const D = G.duty;
     if (e.boss) {
       D.done[e.key] = true; this.clearBossFight(e, true);
-      UI.chat(`${{ b1: '「隐秘码头」', b2: '「海盗甲板」', b3: '「虎鲸之穴」' }[e.sealId]}的封锁解除了。`, 'system');
+      UI.chat(`「${DUNGEON_ARENAS[e.sealId].name}」的封锁解除了。`, 'system');
       if (e.key === 'chopper') { G.game.addItem('shell'); }
-      if (e.key === 'madison') UI.chat('麦迪逊船长：「可恶……这群……冒险者……」', 'npc');
+      if (e.key === 'madison') { UI.chat('麦迪逊船长：「可恶……这群……冒险者……」', 'npc'); UI.chat('船长室外墙上似乎有一个不起眼的开关……', 'system'); }
       if (e.key === 'denn') this.dutyComplete();
     }
   },
@@ -452,7 +505,7 @@ export const Story = {
     G.save.flags.sastasha = true;
     const st = Q().q5; if (st && st.status === 'active' && st.step === 0) this.advance(QUESTS.q5);
     this.gainExp(1000);
-    if (!D.net) { this.makeChest(0, -226); UI.chat('宝箱出现了！调查宝箱获得战利品，之后可以通过右侧「离开任务」按钮返回。', 'quest'); }
+    if (!D.net) { this.makeChest(DUNGEON_CHEST[0], DUNGEON_CHEST[1]); UI.chat('宝箱出现了！调查宝箱获得战利品，之后可以通过右侧「离开任务」按钮返回。', 'quest'); }
   },
   makeChest(x, z, opened) {
     const D = G.duty; if (!D || D.chest) return;
@@ -469,6 +522,8 @@ export const Story = {
   netDuty(e) {
     const D = G.duty; if (!D) return;
     switch (e.s) {
+      case 'start': if (e.memo) D.memo = e.memo; break;
+      case 'coral': this.coralResult(e.c, !!e.ok, Online.byId(e.by)); break;
       case 'engage': Audio.play('boss'); break;
       case 'complete': if (!D.complete) this.dutyComplete(); break;
       case 'chest':
@@ -481,8 +536,8 @@ export const Story = {
     }
   },
   netLoot(e) {
-    const D = G.duty; if (!D.chest) this.makeChest(0, -226);
-    if (!D.chest.opened) { D.chest.opened = true; G.game.tween(0.8, (u) => { D.chest.lid.rotation.x = -u * 1.9; }); Audio.sfxPlay('loot'); VFX.burst(new V3(0, 1.2, -226), '#ffe070', 40, { speed: 4, size: 0.4 }); }
+    const D = G.duty; if (!D.chest) this.makeChest(DUNGEON_CHEST[0], DUNGEON_CHEST[1]);
+    if (!D.chest.opened) { D.chest.opened = true; G.game.tween(0.8, (u) => { D.chest.lid.rotation.x = -u * 1.9; }); Audio.sfxPlay('loot'); VFX.burst(new V3(DUNGEON_CHEST[0], 1.2, DUNGEON_CHEST[1]), '#ffe070', 40, { speed: 4, size: 0.4 }); }
     const by = Online.byId(e.by); if (by && by !== G.player) UI.chat(`${by.name}打开了宝箱。`, 'loot');
     const items = e.items.map((x) => ({ ...x, it: G.game.itemById(x.id) })).filter((x) => x.it);
     const rows = items.map((x) => `<div class="li" data-i="${x.i}"><img src="${icon(x.it.icon, 64)}" alt=""><div class="nm"><b>${esc(x.it.name)}</b><small>物品等级 ${x.it.ilvl}${x.it.job ? ' · ' + JOBS[x.it.job].name + '专用' : ''}</small></div><div class="rolls"><button class="btn primary" data-r="need">需求</button><button class="btn" data-r="greed">贪婪</button><button class="btn ghost" data-r="pass">放弃</button></div></div>`).join('');
@@ -514,7 +569,7 @@ export const Story = {
   },
   async openChest() {
     const D = G.duty; if (D.chest.opened) return; D.chest.opened = true;
-    G.game.tween(0.8, (u) => { D.chest.lid.rotation.x = -u * 1.9; }); Audio.sfxPlay('loot'); VFX.burst(new V3(0, 1.2, -226), '#ffe070', 40, { speed: 4, size: 0.4 });
+    G.game.tween(0.8, (u) => { D.chest.lid.rotation.x = -u * 1.9; }); Audio.sfxPlay('loot'); VFX.burst(new V3(DUNGEON_CHEST[0], 1.2, DUNGEON_CHEST[1]), '#ffe070', 40, { speed: 4, size: 0.4 });
     const S = G.save, items = [weaponItem(S.job, 2), ITEMS.body2, ITEMS.ring1];
     const allies = Combat.party().filter((p) => p !== G.player);
     const rows = items.map((it, i) => `<div class="li" data-i="${i}"><img src="${icon(it.icon, 64)}" alt=""><div class="nm"><b>${esc(it.name)}</b><small>物品等级 ${it.ilvl}${it.job ? ' · ' + JOBS[it.job].name + '专用' : ''}</small></div><div class="rolls"><button class="btn primary" data-r="need">需求</button><button class="btn" data-r="greed">贪婪</button><button class="btn ghost" data-r="pass">放弃</button></div></div>`).join('');
@@ -539,8 +594,8 @@ export const Story = {
       const lb = $('leave-duty'); if (lb) lb.onclick = () => { UI.dutyInfo(null); G.game.loadZone('town', 'wench', { fromDuty: true }); };
     }
     // 区域名称提示
-    const P = G.player; const areas = [['b1', 0, -94, 16, '隐秘码头', 'THE HIDDEN DOCK'], ['b2', 0, -176, 16, '海盗甲板', 'THE PIRATE DECK'], ['b3', 0, -222, 17, '虎鲸之穴', "THE ORCATOOTH'S DEN"]];
-    for (const [id, x, z, r, n, en] of areas) if (!D.seen[id] && Math.hypot(P.pos.x - x, P.pos.z - z) < r + 4) { D.seen[id] = true; UI.zoneTitle(n, '', en); }
+    const P = G.player;
+    for (const [id, x, z, r, n, en] of DUNGEON_REGIONS) if (!D.seen[id] && Math.hypot(P.pos.x - x, P.pos.z - z) < r + 4) { D.seen[id] = true; UI.zoneTitle(n, '', en); }
     // 团灭
     if (!D.net) { if (!D.wiping && Combat.party().every((m) => m.dead)) { D.wipeT += dt; if (D.wipeT > 2.5) this.wipe(); } else D.wipeT = 0; }
     // 玩家倒下且没有可复活的治疗职业时，提供在检查点复活
@@ -551,8 +606,8 @@ export const Story = {
         UI.modal('revive', '无法战斗', '<p style="margin:0;line-height:1.8">队伍中没有能够复活你的治疗职业。<br>要在最近的检查点重新站起来吗？</p>', [{ text: '在检查点复活', primary: true }], { mount: (w, close) => { D.closeRevive = close; } }).then((i) => {
           D.asking = false; D.deadT = 0; D.closeRevive = null; if (!P.dead || i < 0) return;
           if (D.net) { Online.checkpoint(); return; }
-          const cp = D.done.madison ? [0, -196] : D.done.chopper ? [0, -114] : [0, -4];
-          Combat.revive(P, 0.6); P.pos.set(cp[0], 0, cp[1]); G.game.snapCamera();
+          const cp = dungeonCheckpoint(D.done);
+          Combat.revive(P, 0.6); P.pos.set(cp[0], G.zone.heightAt(cp[0], cp[1]) ?? 0, cp[1]); G.game.snapCamera();
         });
       }
     } else D.deadT = 0;
@@ -564,8 +619,8 @@ export const Story = {
     for (const t of Combat.teles) t.cancel = true; Combat.stack = null; Combat.bossScript = null;
     for (const e of Combat.enemies()) { if (e.add) { e.dead = true; e.deadT = 2.7; continue; } if (e.inCombat) { Combat.resetEnemy(e); e.hp = e.maxHp; e.pos.copy(e.spawn); e.wander = null; e.statuses = []; e.addsSpawned = false; } }
     for (const id of ['b1', 'b2', 'b3']) G.zone.setSeal(id, false);
-    const cp = D.done.madison ? [0, -196] : D.done.chopper ? [0, -114] : [0, -4];
-    for (const m of Combat.party()) { m.dead = false; m.model.setDead(false); m.hp = m.effMaxHp; m.mp = m.maxMp; m.pos.set(cp[0] + rand(-2, 2), 0, cp[1] + rand(-1, 2)); m.statuses = m.statuses.filter((s) => s.keep); m.casting = null; m.model.setLoop(null); }
+    const cp = dungeonCheckpoint(D.done);
+    for (const m of Combat.party()) { m.dead = false; m.model.setDead(false); m.hp = m.effMaxHp; m.mp = m.maxMp; const x = cp[0] + rand(-1.5, 1.5), z = cp[1] + rand(-1, 1); m.pos.set(x, G.zone.heightAt(x, z) ?? 0, z); m.statuses = m.statuses.filter((s) => s.keep); m.casting = null; m.model.setLoop(null); }
     G.player.rot = PI; G.cam.yaw = PI; G.game.snapCamera(); Audio.play('dungeon');
     await UI.fade(false); D.wiping = false; D.wipeT = 0;
   },

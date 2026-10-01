@@ -51,6 +51,8 @@ const addMat = (color, map, op = 1) => new THREE.MeshBasicMaterial({ color, map:
 
 function spawn(obj, dur, fn, end) { G.scene.add(obj); const e = { obj, t: 0, dur, fn, end }; list.push(e); return e; }
 const gh = (x, z) => (G.zone ? G.zone.heightAt(x, z) ?? 0 : 0);
+// 直线范围的高度：起点可能在水面或场外（如甲板外的炮击），取沿线最高的地面
+const ghLine = (x, z, dir, len) => { let best = null; for (let t = 0; t <= 1.001; t += 0.125) { const h = G.zone ? G.zone.heightAt(x + Math.sin(dir) * len * t, z + Math.cos(dir) * len * t) : 0; if (h !== null && (best === null || h > best)) best = h; } return best ?? 0; };
 
 export const VFX = {
   update(dt) {
@@ -157,7 +159,7 @@ export const VFX = {
   },
   line(ent, color, len = 10, w = 4) {
     const g = new THREE.PlaneGeometry(w, len); g.translate(0, len / 2, 0); g.rotateX(-PI / 2);
-    const m = new THREE.Mesh(g, addMat(color, tex().rect, 0.8)); m.position.set(ent.pos.x, gh(ent.pos.x, ent.pos.z) + 0.15, ent.pos.z); m.rotation.y = ent.rot + PI;
+    const m = new THREE.Mesh(g, addMat(color, tex().rect, 0.8)); m.position.set(ent.pos.x, ghLine(ent.pos.x, ent.pos.z, ent.rot, len) + 0.15, ent.pos.z); m.rotation.y = ent.rot + PI;
     spawn(m, 0.35, (u) => { m.scale.z = 0.3 + u * 0.7; m.material.opacity = 0.8 * (1 - u); });
   },
   projectile(from, target, o = {}) {
@@ -212,7 +214,7 @@ export const VFX = {
     base.rotateX(-PI / 2);
     const m1 = new THREE.Mesh(base, edge), m2 = new THREE.Mesh(inner.clone(), fill);
     m1.renderOrder = 3; m2.renderOrder = 4; grp.add(m1); grp.add(m2);
-    grp.position.set(t.x, gh(t.x, t.z) + 0.07, t.z);
+    grp.position.set(t.x, (t.shape === 'line' ? ghLine(t.x, t.z, t.dir, t.len) : gh(t.x, t.z)) + 0.07, t.z);
     if (t.shape === 'cone') grp.rotation.y = t.dir - PI / 2;
     if (t.shape === 'line') grp.rotation.y = t.dir + PI;
     const e = spawn(grp, t.dur, (u) => {

@@ -2,7 +2,7 @@
 // 规则与单人版 combat.js 一致；所有视觉与音效都以事件（ev）形式发出，由客户端播放。
 import { clamp, rand, pick, angDiff } from '../mathutil.js';
 import { JOBS, MOBS, ALLIES, ITEMS, weaponItem } from '../data.js';
-import { fieldH, fieldOpen, FIELD_MOBS, FATE_AREA, dungeonWalk, DUNGEON_ARENAS } from '../nav.js';
+import { fieldH, fieldOpen, FIELD_MOBS, FATE_AREA, dungeonWalk, DUNGEON_ARENAS, DUNGEON_PACKS, DUNGEON_BOSSES, DUNGEON_PROPS, DUNGEON_CHEST, dungeonCheckpoint, inArena, arenaSpot } from '../nav.js';
 import { NPC_KIT, MOB_RADIUS, FX_DELAY, FX_SPEED, trustFill } from './defs.js';
 
 const PI = Math.PI;
@@ -23,7 +23,7 @@ export function inShape(t, x, z, pad = 0) {
   if (t.shape === 'line') { const fx = Math.sin(t.dir), fz = Math.cos(t.dir); const al = dx * fx + dz * fz, ac = Math.abs(dx * fz - dz * fx); return al >= -pad && al <= t.len + pad && ac <= t.width / 2 + pad; }
   return false;
 }
-const CHECKPOINTS = (done) => (done.madison ? [0, -196] : done.chopper ? [0, -114] : [0, -4]);
+const CORAL_CN = { blue: '蓝', red: '红', green: '绿' };
 
 export class World {
   constructor(kind, o = {}) {
@@ -32,9 +32,9 @@ export class World {
       this.fateCD = 15; this.fate = null; this.fateUpd = 0;
       for (const g of FIELD_MOBS) for (let i = 0; i < g.n; i++) this.spawnFieldMob(g);
     } else {
-      const { W, seals } = dungeonWalk(); this.W = W; this.seals = seals;
+      const { W, seals, doors, nav } = dungeonWalk(); Object.assign(this, { W, seals, doors, nav });
       this.roster = o.roster || [];
-      this.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, started: false, complete: false, wipeT: 0, wiping: false, chest: null, loot: null, present: new Set(), filled: false, bosses: {}, seen: {} };
+      this.duty = { t: 3600, done: { chopper: false, madison: false, denn: false }, started: false, complete: false, wipeT: 0, wiping: false, chest: null, loot: null, present: new Set(), filled: false, bosses: {}, seen: {}, memo: null, doorOpen: { coral: false, switch: false }, ambushed: {} };
     }
     this.ev = []; // 构造时产生的生成事件由新加入的玩家通过 spawnList() 获取
   }
@@ -412,9 +412,17 @@ export class World {
 
   // ---------- 移动 ----------
   moveToward(e, tx, tz, speed, dt, stopDist = 0.3) {
-    const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz);
-    if (d <= stopDist) { e.moveSpeed = 0; return true; }
-    const step = Math.min(d - stopDist * 0.5, speed * dt), nx = e.x + (dx / d) * step, nz = e.z + (dz / d) * step, r = Math.min(e.radius * 0.6, 0.5);
+    const fd = Math.hypot(tx - e.x, tz - e.z);
+    if (fd <= stopDist) { e.moveSpeed = 0; return true; }
+    // 溶洞里绕过拐角：看不到目标时先走向路点
+    let gx = tx, gz = tz;
+    if (this.nav) {
+      e.navT = (e.navT || 0) - dt;
+      if (e.navT <= 0 || !e.navGoal || Math.hypot(e.navGoal[0] - tx, e.navGoal[1] - tz) > 2) { e.navT = 0.35; e.navGoal = [tx, tz]; e.navWp = this.nav.step(e.x, e.z, tx, tz); }
+      if (e.navWp) { if (Math.hypot(e.navWp[0] - e.x, e.navWp[1] - e.z) < 0.8) e.navT = 0; else { gx = e.navWp[0]; gz = e.navWp[1]; } }
+    }
+    const dx = gx - e.x, dz = gz - e.z, d = Math.hypot(dx, dz) || 1e-6;
+    const step = Math.min(gx === tx && gz === tz ? fd - stopDist * 0.5 : d, speed * dt), nx = e.x + (dx / d) * step, nz = e.z + (dz / d) * step, r = Math.min(e.radius * 0.6, 0.5);
     const stuck = !this.canWalk(e.x, e.z, r), ok = (x, z) => stuck || this.canWalk(x, z, r);
     if (ok(nx, nz)) { e.x = nx; e.z = nz; } else if (ok(nx, e.z)) e.x = nx; else if (ok(e.x, nz)) e.z = nz;
     const h = this.heightAt(e.x, e.z); if (h !== null) e.y = h;
@@ -494,7 +502,8 @@ export class World {
     if (!en.length) {
       a.drawnT = Math.max(0, (a.drawnT || 0) - dt); if (a.drawnT <= 0) a.drawn = false;
       const idx = a.slot || 1, fx = Math.sin(P.rot), fz = Math.cos(P.rot);
-      const tx = P.x - fx * 2.4 + Math.cos(P.rot) * (idx - 2) * 1.8, tz = P.z - fz * 2.4 - Math.sin(P.rot) * (idx - 2) * 1.8;
+      let tx = P.x - fx * 2.4 + Math.cos(P.rot) * (idx - 2) * 1.8, tz = P.z - fz * 2.4 - Math.sin(P.rot) * (idx - 2) * 1.8;
+      if (!this.canWalk(tx, tz, 0.4)) { tx = P.x - fx * 1.2; tz = P.z - fz * 1.2; if (!this.canWalk(tx, tz, 0.4)) { tx = P.x; tz = P.z; } }
       const d = Math.hypot(tx - a.x, tz - a.z);
       if (d > 25) { a.x = tx; a.z = tz; a.y = P.y; }
       if (d > 1.2) this.moveToward(a, tx, tz, d > 6 ? 7.5 : 4, dt, 0.6); else { a.moveSpeed = 0; a.rot += angDiff(a.rot, P.rot) * dt * 3; }
@@ -638,28 +647,25 @@ export class World {
     const D = this.duty;
     if (p.token) D.present.add(p.token);
     if (!D.started) this.startDuty();
-    else { const [x, z] = CHECKPOINTS(D.done); p.x = x; p.z = z; this.emit({ k: 'tp', to: p.id, x, z }); }
+    else { const [x, z] = dungeonCheckpoint(D.done); p.x = x; p.z = z; this.emit({ k: 'tp', to: p.id, x, z }); }
   }
   startDuty() {
     const D = this.duty; D.started = true; D.startAt = this.time;
     const L = Math.max(1, ...this.roster.map((r) => r.lv || 1), ...this.players().map((p) => p.level));
     this.level = L;
     const pack = (list) => { const ms = list.map(([k, x, z]) => this.spawnMob(k, L, x, z, { wanderR: 1.5, rot: 0, aggroR: 9 })); ms.forEach((m) => (m.pack = ms)); };
-    pack([['pirate', 0, -46], ['pirate2', -4, -53], ['pirate', 4, -54]]);
-    pack([['pirate2', -3, -130], ['pirate', 3, -131], ['pirate', 0, -137]]);
-    const b1 = this.spawnMob('chopper', L + 1, 0, -97, { rot: 0, noWander: true, aggroR: 13, sealId: 'b1', key: 'chopper' });
-    const b2 = this.spawnMob('madison', L + 1, 0, -182, { rot: 0, noWander: true, aggroR: 12, sealId: 'b2', key: 'madison' });
-    const b3 = this.spawnMob('denn', L + 2, 0, -247, { rot: 0, noWander: true, aggroR: 31, sealId: 'b3', key: 'denn' });
-    for (const b of [b1, b2, b3]) { b.aggro = true; b.leash = 999; }
-    D.bosses = { chopper: b1, madison: b2, denn: b3 };
+    for (const p of DUNGEON_PACKS) pack(p);
+    for (const [kind, x, z, sealId, add, aggroR] of DUNGEON_BOSSES) { const b = this.spawnMob(kind, L + add, x, z, { rot: 0, noWander: true, aggroR, sealId, key: kind }); b.aggro = true; b.leash = 999; D.bosses[kind] = b; }
+    D.memo = pick(['blue', 'red', 'green']); // 血迹斑斑的笔记上写着的珊瑚颜色
     this.fillAllies(this.roster.length ? this.roster : this.players().map((p) => ({ role: p.role })));
-    this.emit({ k: 'duty', s: 'start' });
+    this.emit({ k: 'duty', s: 'start', memo: D.memo });
   }
   // 按编成 1 防护 / 1 治疗 / 2 输出，缺少的职能由亲信战友补上
   fillAllies(members) {
     const have = [...this.ents.values()].filter((e) => e.kind === 'ally').map((e) => ({ role: e.role, key: e.allyKey }));
     let slot = have.length + 1;
-    for (const k of trustFill(members.map((m) => m.role), have)) this.spawnAlly(k, slot++, this.level || 1, rand(-2, 2), -6 - slot);
+    const L = this.leader(), [bx, bz] = L ? [L.x, L.z] : dungeonCheckpoint(this.duty.done);
+    for (const k of trustFill(members.map((m) => m.role), have)) { const a = this.spawnAlly(k, slot++, this.level || 1, bx + rand(-1.5, 1.5), bz + rand(-1.5, 1.5)); if (!this.canWalk(a.x, a.z, 0.4)) { a.x = bx; a.z = bz; } a.y = this.heightAt(a.x, a.z) ?? 0; }
   }
   updateDuty(dt) {
     const D = this.duty; if (!D.started) return;
@@ -671,7 +677,7 @@ export class World {
     if (D.loot) { D.loot.t -= dt; if (D.loot.t <= 0 || this.players().every((p) => D.loot.items.every((it) => it.ch.has(p.id)))) this.resolveLoot(); }
   }
   bossEngage(e) {
-    const [, , , nm] = DUNGEON_ARENAS[e.sealId];
+    const A = DUNGEON_ARENAS[e.sealId], nm = A.name;
     this.msg(`「${nm}」将在5秒后被封锁！`);
     if (e.key === 'madison') this.msg('麦迪逊船长：「哪来的老鼠？敢闯我蛇蝎帮的地盘！」', 'npc');
     if (e.key === 'denn') this.msg('虎鲸牙·丹恩发出了震耳欲聋的咆哮！', 'npc');
@@ -680,10 +686,30 @@ export class World {
     this.later(5, () => {
       if (!e.inCombat || e.dead) return;
       this.setSeal(e.sealId, true); this.msg(`「${nm}」被封锁了！`);
-      const [cx, cz, cr] = DUNGEON_ARENAS[e.sealId];
-      for (const m of this.party()) if (Math.hypot(m.x - cx, m.z - cz) > cr - 0.5) { const x = cx + rand(-2, 2), z = cz + cr - 3; if (m.kind === 'player') this.emit({ k: 'tp', to: m.id, x, z }); m.x = x; m.z = z; }
+      for (const m of this.party()) if (!inArena(e.sealId, m.x, m.z)) { const x = A.entry[0] + rand(-1.5, 1.5), z = A.entry[1] + rand(-1, 1); if (m.kind === 'player') this.emit({ k: 'tp', to: m.id, x, z }); m.x = x; m.z = z; m.y = this.heightAt(x, z) ?? m.y; }
     });
   }
+  // 调查珊瑚（选对颜色打开隐藏的门，选错引来沙哈金族）与隐秘的开关（击败麦迪逊后打开船尾的门）
+  interactObj(pid, obj) {
+    const D = this.duty, p = this.ents.get(pid); if (!D || !D.started || !p || p.dead || typeof obj !== 'string') return;
+    const near = (pos) => Math.hypot(p.x - pos[0], p.z - pos[1]) < 5;
+    if (obj.startsWith('coral_')) {
+      const c = obj.slice(6), pos = DUNGEON_PROPS.corals[c];
+      if (!pos || !near(pos) || D.doorOpen.coral || D.ambushed[c]) return;
+      if (c === D.memo) { this.setDoor('coral', true); this.msg(`${p.name}调查了${CORAL_CN[c]}色的珊瑚……隐藏的门打开了！`, 'system'); }
+      else {
+        D.ambushed[c] = true; this.msg(`${p.name}调查了${CORAL_CN[c]}色的珊瑚……是陷阱！沙哈金族从水中冒了出来！`);
+        const ms = [0, 1].map(() => { let x = pos[0], z = pos[1]; for (let k = 0; k < 20; k++) { const a = rand(0, PI * 2); x = pos[0] + Math.cos(a) * 3; z = pos[1] + Math.sin(a) * 3; if (this.canWalk(x, z, 0.6)) break; } return this.spawnMob('sahagin', this.level || p.level, x, z, { wanderR: 2, aggroR: 12 }); });
+        ms.forEach((m) => { m.pack = ms; this.engage(m, p); });
+      }
+      this.emit({ k: 'duty', s: 'coral', c, ok: c === D.memo ? 1 : 0, by: pid });
+    } else if (obj === 'switch') {
+      if (!near(DUNGEON_PROPS.switch) || D.doorOpen.switch) return;
+      if (!D.done.madison) return this.err(p, '附近还有敌人，无法调查');
+      this.setDoor('switch', true); this.msg(`${p.name}拉下了隐秘的开关，下船的栈桥打开了。`, 'system');
+    }
+  }
+  setDoor(id, open) { this.duty.doorOpen[id] = open; this.doors[id].on = !open; this.emit({ k: 'door', id, open: open ? 1 : 0 }); }
   setSeal(id, on) { for (const b of this.seals[id] || []) b.on = on; this.emit({ k: 'seal', s: id, on: on ? 1 : 0 }); }
   clearBossFight(e, killed) {
     this.setSeal(e.sealId, false); this.script = null; this.stack = null;
@@ -694,15 +720,16 @@ export class World {
   dutyKill(e) {
     const D = this.duty; if (!e.boss) return;
     D.done[e.key] = true; this.clearBossFight(e, true);
-    this.msg(`「${DUNGEON_ARENAS[e.sealId][3]}」的封锁解除了。`, 'system');
+    this.msg(`「${DUNGEON_ARENAS[e.sealId].name}」的封锁解除了。`, 'system');
+    if (e.key === 'madison') this.msg('船长室外墙上似乎有一个不起眼的开关……', 'system');
     if (e.key === 'madison') this.msg('麦迪逊船长：「可恶……这群……冒险者……」', 'npc');
     if (e.key === 'denn') this.dutyComplete();
   }
   dutyComplete() {
     const D = this.duty; D.complete = true;
     this.later(1.2, () => { for (const m of this.party()) if (m.dead) this.revive(m, 0.5); });
-    D.chest = { x: 0, z: -226, opened: false };
-    this.emit({ k: 'duty', s: 'complete' }); this.emit({ k: 'duty', s: 'chest', x: 0, z: -226 });
+    D.chest = { x: DUNGEON_CHEST[0], z: DUNGEON_CHEST[1], opened: false };
+    this.emit({ k: 'duty', s: 'complete' }); this.emit({ k: 'duty', s: 'chest', x: D.chest.x, z: D.chest.z });
   }
   openChest(id) {
     const D = this.duty, p = this.ents.get(id);
@@ -734,7 +761,7 @@ export class World {
       for (const t of this.teles) t.cancel = true; this.stack = null; this.script = null;
       for (const e of this.enemies()) { if (e.add) { e.dead = true; e.deadT = 2.7; e.hp = 0; this.emit({ k: 'die', id: e.id, q: 1 }); continue; } if (e.inCombat) { this.resetEnemy(e); e.hp = e.maxHp; e.x = e.spawn.x; e.z = e.spawn.z; e.wander = null; } }
       for (const id of ['b1', 'b2', 'b3']) this.setSeal(id, false);
-      const [x, z] = CHECKPOINTS(D.done);
+      const [x, z] = dungeonCheckpoint(D.done);
       for (const m of this.party()) {
         if (m.dead) this.revive(m, 1);
         m.hp = effMax(m); m.mp = m.maxMp; m.statuses = m.statuses.filter((s) => s.keep); m.casting = null; m.pend = null; m.x = x + rand(-2, 2); m.z = z + rand(-1, 2);
@@ -747,7 +774,7 @@ export class World {
   checkpointRevive(p) {
     if (!this.duty || !p.dead) return;
     if (this.party().some((m) => !m.dead && m.role === 'healer' && m !== p)) return this.err(p, '请等待治疗职业的复活');
-    const [x, z] = CHECKPOINTS(this.duty.done);
+    const [x, z] = dungeonCheckpoint(this.duty.done);
     this.revive(p, 0.6); p.x = x; p.z = z; this.emit({ k: 'tp', to: p.id, x, z });
   }
   // ---------- 同步给客户端的快照 ----------
@@ -779,6 +806,7 @@ export class World {
     if (this.fate) o.fate = { t: Math.round(this.fate.t), p: this.fate.p };
     if (D) {
       o.di = this.dutyInfo(); o.seals = Object.keys(this.seals).filter((k) => this.seals[k][0].on);
+      o.memo = D.memo; o.doors = D.doorOpen;
       if (D.chest) o.chest = { x: D.chest.x, z: D.chest.z, op: D.chest.opened ? 1 : 0 };
     }
     return o;
@@ -805,13 +833,13 @@ export function bossScript(W, boss) {
   };
   const spawnAdds = (n) => {
     for (let i = 0; i < n; i++) {
-      const a = rand(0, PI * 2), m = W.spawnMob('madison_add', boss.level - 1, boss.spawn.x + Math.cos(a) * 12, boss.spawn.z + 6 + Math.sin(a) * 8, { noWander: true, add: true });
+      const [x, z] = arenaSpot(W.W, boss.sealId), m = W.spawnMob('madison_add', boss.level - 1, x, z, { noWander: true, add: true });
       const tgt = alive().filter((p) => p.role !== 'tank')[0] || alive()[0]; if (tgt) { W.engage(m, tgt); m.enmity.set(tgt.id, 50); }
     }
   };
   const spawnClams = () => {
     for (const sx of [-9, 9]) {
-      const m = W.spawnMob('clam', boss.level, sx, -230, { noWander: true, rot: 0, add: true }); const p = alive()[0]; if (p) W.engage(m, p);
+      const m = W.spawnMob('clam', boss.level, boss.spawn.x + sx, boss.spawn.z + 13, { noWander: true, rot: 0, add: true }); const p = alive()[0]; if (p) W.engage(m, p);
       W.later(26, () => {
         if (m.dead || boss.dead) return;
         m.dead = true; m.deadT = 1.5; m.hp = 0; W.emit({ k: 'die', id: m.id, q: 1 });

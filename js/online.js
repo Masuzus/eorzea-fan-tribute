@@ -60,6 +60,8 @@ export const Online = {
     if (sim.fate) Story.netFate({ s: 'start', t: sim.fate.t, p: sim.fate.p, quiet: true });
     if (G.duty) {
       if (sim.di) this.applyDI(sim.di);
+      if (sim.memo) G.duty.memo = sim.memo;
+      for (const [id, open] of Object.entries(sim.doors || {})) if (open) Story.setDoor(id, true, true);
       for (const s of sim.seals || []) G.zone.setSeal(s, true);
       if (sim.chest) Story.netDuty({ s: 'chest', x: sim.chest.x, z: sim.chest.z, op: sim.chest.op, quiet: true });
     }
@@ -253,6 +255,7 @@ export const Online = {
   },
   checkpoint() { Net.send({ t: 'gen', g: 'rv' }); },
   openChest() { Net.send({ t: 'chest' }); },
+  obj(id) { Net.send({ t: 'obj', id }); },
   loot(i, c) { Net.send({ t: 'loot', i, c }); },
 
   // ---------- 服务器 → 画面 ----------
@@ -315,6 +318,7 @@ export const Online = {
       case 'stack': { const x = this.byId(e.id); if (!x) break; VFX.stackMarker(x, e.d); if (x === P) UI.error('分摊！与队友站在一起！', 'warn'); break; }
       case 'kb': P.kb = { dx: e.dx, dz: e.dz, t: e.d / 20 }; UI.error('被击退了！', 'warn'); break;
       case 'tp': { P.pos.set(e.x, G.zone.heightAt(e.x, e.z) ?? 0, e.z); P.kb = null; G.game.snapCamera(); break; }
+      case 'door': if (G.duty) Story.setDoor(e.id, !!e.open); break;
       case 'seal': G.zone.setSeal(e.s, !!e.on); if (e.on) Audio.sfxPlay('seal'); else if (G.duty) Audio.play('dungeon'); break;
       case 'lbu': this.onLB(e); break;
       case 'fate': S.netFate(e); break;
@@ -396,7 +400,7 @@ export const Online = {
       case 'raidwide': if (s) { VFX.ring(s.pos, '#8ad0ff', 26, 1); Audio.sfxPlay('water'); } break;
       case 'empower': if (s) VFX.pillar(s.pos, '#ff6ab0', 12, 1.2, 4); break;
       case 'cannons':
-        for (const l of this.recentLines) for (let k = 0; k < 5; k++) VFX.fire(new V3(l.x + Math.sin(l.dir) * k * 7, 1, l.z + Math.cos(l.dir) * k * 7), 0.8);
+        for (const l of this.recentLines) for (let k = 0; k < 5; k++) { const x = l.x + Math.sin(l.dir) * k * 7, z = l.z + Math.cos(l.dir) * k * 7; VFX.fire(new V3(x, (G.zone.heightAt(x, z) ?? (s ? s.pos.y : 0)) + 1, z), 0.8); }
         Audio.sfxPlay('fire');
         break;
       default: {

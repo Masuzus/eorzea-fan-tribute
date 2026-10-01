@@ -1,6 +1,6 @@
 // 地图构建：利姆萨·罗敏萨（城镇）、拉诺西亚低地（野外）、天然要害沙斯塔夏溶洞（副本）
-import { THREE, G, M, textures, boxGeo, planeGeo, Batcher, makeWater, fbm, vnoise, rng, smooth, lerp, clamp, canvasTex, signTex, rand } from './engine.js';
-import { Walk, fieldH, dRoad, fieldOpen, FIELD_MOBS, FATE_AREA, DUNGEON_AREAS, DUNGEON_CRATES, DUNGEON_TENTS, DUNGEON_TORCHES, DUNGEON_MAST, DUNGEON_CANNONS, DUNGEON_SEALS, dungeonWalk } from './nav.js';
+import { THREE, G, M, textures, boxGeo, planeGeo, quadGeo, Batcher, makeWater, fbm, vnoise, rng, smooth, lerp, clamp, canvasTex, signTex, rand } from './engine.js';
+import { Walk, fieldH, dRoad, fieldOpen, FIELD_MOBS, FATE_AREA, DUNGEON_AREAS, DUNGEON_WATER, DUNGEON_WATER_Y, DUNGEON_SPAWN, DUNGEON_PROPS, DUNGEON_DOORS, DUNGEON_SEALS, DUNGEON_TORCHES, DUNGEON_LABELS, areaDist, dungeonWalk } from './nav.js';
 
 const PI = Math.PI;
 
@@ -414,70 +414,159 @@ function mergeG(list) {
 }
 
 // =====================================================================
-// 天然要害沙斯塔夏溶洞
+// 天然要害沙斯塔夏溶洞（布局见 nav.js）
 // =====================================================================
 function buildDungeon() {
-  const grp = new THREE.Group(), B = new Batcher(), T = textures();
-  const { W, seals: sealBlocks } = dungeonWalk(), areas = DUNGEON_AREAS;
-  const sandM = M('#ffffff', { map: T.sand, r: 1 }), rockM = M('#6a625a', { map: T.rock, flat: true, r: 1 });
-  B.add(planeGeo(120, 290, 6), M('#2a2622', { map: T.sand }), 0, -0.05, -120);
-  for (const a of areas) {
-    if (a[0] === 'r') { B.add(planeGeo(a[3] - a[1], a[4] - a[2], 4), sandM, (a[1] + a[3]) / 2, 0.01, (a[2] + a[4]) / 2); }
-    else { const g = new THREE.CircleGeometry(a[3], 48).rotateX(-PI / 2); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * a[3] / 2, uv.getY(i) * a[3] / 2); B.add(g, sandM, a[1], 0.02, a[2]); }
-  }
-  // 岩壁
-  const inside = (x, z, pad) => { for (const a of areas) { if (a[0] === 'r') { if (x > a[1] - pad && x < a[3] + pad && z > a[2] - pad && z < a[4] + pad) return true; } else if (Math.hypot(x - a[1], z - a[2]) < a[3] + pad) return true; } return false; };
+  const grp = new THREE.Group(), B = new Batcher(), T = textures(), P = DUNGEON_PROPS;
+  const { W, seals: sealBlocks, doors: doorBlocks, nav } = dungeonWalk(), areas = DUNGEON_AREAS;
+  const sandM = M('#ffffff', { map: T.sand, r: 1 }), rockM = M('#6a625a', { map: T.rock, flat: true, r: 1 }), wood = M('#ffffff', { map: T.wood, r: 0.85 }), darkWood = M('#6a4a30', { map: T.wood, r: 0.9 });
+  const floorY = (x, z) => W.height(x, z) ?? 0;
+  const dWalk = (x, z) => { let d = Infinity, a0 = null; for (const a of areas) { const v = areaDist(a, x, z); if (v < d) { d = v; a0 = a; } } return [d, a0]; };
+  const dWater = (x, z) => { let d = Infinity; for (const a of DUNGEON_WATER) d = Math.min(d, areaDist(a, x, z)); return d; };
+  const areaY = (a, x, z) => { if (a[0] === 'c') return a[4]; if (a[0] === 'r') return a[5]; const [, x0, z0, y0, x1, z1, y1] = a, dx = x1 - x0, dz = z1 - z0; return lerp(y0, y1, clamp(((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz), 0, 1)); };
+
+  // ---- 地面 ----
+  areas.forEach((a, i) => {
+    const isWood = a[a.length - 1] === 'wood', mat = isWood ? wood : sandM, lift = 0.012 + (i % 4) * 0.004;
+    if (a[0] === 'c') { const g = new THREE.CircleGeometry(a[3], 48).rotateX(-PI / 2); const uv = g.attributes.uv; for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * a[3] / 2, uv.getY(k) * a[3] / 2); B.add(g, mat, a[1], a[4] + lift, a[2]); }
+    else if (a[0] === 'r') B.add(planeGeo(a[3] - a[1], a[4] - a[2], 4), mat, (a[1] + a[3]) / 2, a[5] + lift, (a[2] + a[4]) / 2);
+    else {
+      const [, x0, z0, y0, x1, z1, y1, w] = a, L = Math.hypot(x1 - x0, z1 - z0), nx = (-(z1 - z0) / L) * w / 2, nz = ((x1 - x0) / L) * w / 2;
+      const q = [[x0 + nx, y0 + lift, z0 + nz], [x0 - nx, y0 + lift, z0 - nz], [x1 - nx, y1 + lift, z1 - nz], [x1 + nx, y1 + lift, z1 + nz]];
+      let g = quadGeo(...q, w / 4, L / 4); g.computeVertexNormals(); if (g.attributes.normal.getY(0) < 0) g = quadGeo(q[3], q[2], q[1], q[0], w / 4, L / 4);
+      B.add(g, mat, 0, 0, 0);
+      if (!isWood) for (const [x, y, z] of [[x0, y0, z0], [x1, y1, z1]]) B.add(new THREE.CircleGeometry(w / 2, 20).rotateX(-PI / 2), mat, x, y + lift - 0.004, z);
+      if (isWood) { // 木板两侧的扶手与支柱
+        for (const s of [1, -1]) for (let d = 0; d <= L; d += 2) { const t = d / L, x = x0 + (x1 - x0) * t + nx * s * 0.95, z = z0 + (z1 - z0) * t + nz * s * 0.95, y = lerp(y0, y1, t); B.add(new THREE.CylinderGeometry(0.07, 0.08, 1.1, 6), darkWood, x, y + 0.55, z); B.add(new THREE.CylinderGeometry(0.12, 0.14, 3, 6), darkWood, x, y - 1.5, z); }
+      }
+    }
+  });
+  // 整个溶洞下方的水面（码头、海盗船四周、丹恩的水潭、入口外的海）
+  const sea = makeWater(150, { depth: 360, deep: '#03161e', shallow: '#167a8a', sky: '#0a3a4a', glow: 0.9, seg: 70, amp: 0.3 }); sea.position.set(-5, DUNGEON_WATER_Y, -135); grp.add(sea);
+
+  // ---- 岩壁：环绕可行走区域与水面，入口北面向大海敞开 ----
   let k = 0;
-  for (let z = 6; z > -250; z -= 2.6) for (let x = -34; x <= 34; x += 2.6) {
+  for (let z = 30; z > -315; z -= 2.6) for (let x = -64; x <= 54; x += 2.6) {
     const jx = x + Math.sin(z * 1.3 + x) * 1.2, jz = z + Math.cos(x * 1.7 + z) * 1.2;
-    if (inside(jx, jz, 0.5) || !inside(jx, jz, 5.5)) continue;
+    if (jz > 10) continue;
+    const [dw, near] = dWalk(jx, jz), dq = dWater(jx, jz);
+    if (dw < 0.5 || dq < 0.5 || Math.min(dw, dq) > 5.5) continue;
+    const base = dw <= dq ? areaY(near, jx, jz) : DUNGEON_WATER_Y;
     const s = 2.2 + vnoise(jx * 0.3, jz * 0.3) * 3.5; k++;
-    B.add(rockVariant(k), rockM, jx, s * 0.6 - 0.5, jz, k, k * 0.7, 0, s, s * (1.6 + vnoise(jz, jx) * 1.8), s);
+    B.add(rockVariant(k), rockM, jx, base + s * 0.6 - 0.5, jz, k, k * 0.7, 0, s, s * (1.6 + vnoise(jz, jx) * 1.8), s);
   }
-  // 钟乳石
-  for (let i = 0; i < 90; i++) { const a = areas[i % areas.length]; const x = a[0] === 'c' ? a[1] + rand(-a[3], a[3]) : rand(a[1], a[3]), z = a[0] === 'c' ? a[2] + rand(-a[3], a[3]) : rand(a[2], a[4]); B.add(new THREE.ConeGeometry(rand(0.4, 1.2), rand(3, 8), 6), rockM, x, rand(11, 15), z, PI, 0, 0); }
-  // 发光珊瑚与水晶
+  // 入口外海上的礁石
+  for (let i = 0; i < 9; i++) { const x = rand(-30, 30), z = rand(16, 60), s = rand(1.5, 4); k++; B.add(rockVariant(k), rockM, x, DUNGEON_WATER_Y + s * 0.3, z, k, k, 0, s, s * rand(0.8, 2), s); }
+  // 钟乳石与石笋
+  for (let i = 0; i < 140; i++) {
+    const a = areas[i % areas.length]; let x, z;
+    if (a[0] === 'c') { const r = rand(0, a[3]), t = rand(0, PI * 2); x = a[1] + Math.cos(t) * r; z = a[2] + Math.sin(t) * r; } else if (a[0] === 's') { const t = Math.random(); x = lerp(a[1], a[4], t); z = lerp(a[2], a[5], t); } else { x = rand(a[1], a[3]); z = rand(a[2], a[4]); }
+    if (z > 4) continue;
+    B.add(new THREE.ConeGeometry(rand(0.4, 1.3), rand(3, 9), 6), rockM, x, floorY(x, z) + rand(11, 15), z, PI, 0, 0);
+  }
+  // 发光珊瑚与水晶（贴着岩壁）
   const glowMats = [M('#7ae0ff', { e: '#2ac0ff', ei: 2.2 }), M('#ff8ad0', { e: '#ff3aa0', ei: 1.8 }), M('#9aff9a', { e: '#3aff6a', ei: 1.6 })];
-  for (let i = 0; i < 70; i++) {
-    let x, z, tries = 0; do { x = rand(-26, 26); z = rand(-245, 4); tries++; } while ((inside(x, z, -0.2) || !inside(x, z, 3)) && tries < 40);
-    const m = glowMats[i % 3];
-    if (i % 2) B.add(new THREE.OctahedronGeometry(rand(0.2, 0.5), 0), m, x, rand(0.2, 2), z, rand(0, 1), rand(0, 3), 0, 1, 2.2, 1, false);
-    else for (let j = 0; j < 4; j++) B.add(new THREE.CylinderGeometry(0.04, 0.08, rand(0.5, 1.2), 5), m, x + rand(-0.3, 0.3), 0.4, z + rand(-0.3, 0.3), rand(-0.4, 0.4), 0, rand(-0.4, 0.4), 1, 1, 1, false);
+  for (let i = 0; i < 110; i++) {
+    let x, z, near, dw, tries = 0;
+    do { x = rand(-50, 40); z = rand(-300, 4); [dw, near] = dWalk(x, z); tries++; } while ((dw < 0.2 || dw > 3 || dWater(x, z) < 0.3) && tries < 60);
+    if (tries >= 60) continue;
+    const m = glowMats[i % 3], y = areaY(near, x, z);
+    if (i % 2) B.add(new THREE.OctahedronGeometry(rand(0.2, 0.5), 0), m, x, y + rand(0.2, 2), z, rand(0, 1), rand(0, 3), 0, 1, 2.2, 1, false);
+    else for (let j = 0; j < 4; j++) B.add(new THREE.CylinderGeometry(0.04, 0.08, rand(0.5, 1.2), 5), m, x + rand(-0.3, 0.3), y + 0.4, z + rand(-0.3, 0.3), rand(-0.4, 0.4), 0, rand(-0.4, 0.4), 1, 1, 1, false);
   }
-  // 海盗营地
-  const wood = M('#ffffff', { map: T.wood });
-  for (const [x, z] of DUNGEON_CRATES) { crate(B, x, 0, z, 1.1, rand(0, 1)); crate(B, x + 1.2, 0, z + 0.3, 0.8, 0.3); barrel(B, x - 0.4, 0, z + 1.4); }
-  for (const [x, z] of DUNGEON_TENTS) B.add(new THREE.ConeGeometry(2.2, 3, 4), M('#8a6a4a', { flat: true }), x, 1.5, z, 0, PI / 4, 0);
-  // Boss2 甲板
-  B.add(new THREE.CylinderGeometry(15.5, 15.5, 0.4, 40), wood, 0, 0.05, -176);
-  B.add(new THREE.CylinderGeometry(0.5, 0.6, 16, 10), M('#4a3020'), DUNGEON_MAST[0], 8, DUNGEON_MAST[1]);
-  { const g = new THREE.PlaneGeometry(10, 6, 6, 3); const p = g.attributes.position; for (let i = 0; i < p.count; i++) p.setZ(i, (1 - Math.pow(p.getX(i) / 5, 2)) * 1.2); g.computeVertexNormals(); B.add(g, M('#e8dcc8', { ds: true }), 8, 11, -185.5); }
-  for (const [x, z, a] of DUNGEON_CANNONS) B.add(new THREE.CylinderGeometry(0.35, 0.45, 2.2, 10), M('#2a2a30', { m: 0.7, r: 0.4 }), x, 0.9, z, PI / 2, -a + PI / 2, 0);
-  // 水池
-  const pool = makeWater(40, { deep: '#04202a', shallow: '#1a8a9a', sky: '#0a3a4a', glow: 1, seg: 40, amp: 0.25 }); pool.position.set(0, -0.35, -248); grp.add(pool);
-  const pool2 = makeWater(30, { deep: '#04202a', shallow: '#1a8a9a', sky: '#0a3a4a', glow: 1, seg: 20, amp: 0.2 }); pool2.position.set(22, -0.4, -94); grp.add(pool2);
-  // 封锁墙
-  const seals = {};
-  const sealIdx = {};
-  for (const [id, z] of DUNGEON_SEALS) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 7), new THREE.MeshBasicMaterial({ color: '#ff7a3a', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    m.position.set(0, 3.5, z); grp.add(m); const i = sealIdx[id] = (sealIdx[id] || 0) + 1; (seals[id] = seals[id] || []).push({ m, b: sealBlocks[id][i - 1] });
+
+  // ---- 珊瑚洞窟：三色珊瑚、血迹斑斑的笔记、隐藏的门 ----
+  const coralCol = { blue: ['#5ab8ff', '#1a7aff'], red: ['#ff5a5a', '#ff1a2a'], green: ['#6aff7a', '#1aff4a'] };
+  for (const [c, [x, z]] of Object.entries(P.corals)) {
+    const m = M(coralCol[c][0], { e: coralCol[c][1], ei: 1.6, r: 0.6 });
+    for (let j = 0; j < 9; j++) { const a = (j / 9) * PI * 2, r = rand(0.1, 0.7); B.add(new THREE.CylinderGeometry(0.06, 0.16, rand(1.2, 2.4), 6), m, x + Math.cos(a) * r, 0.8, z + Math.sin(a) * r, rand(-0.5, 0.5), 0, rand(-0.5, 0.5), 1, 1, 1, false); }
+    B.add(new THREE.IcosahedronGeometry(0.75, 0), m, x, 0.35, z, 0, 0, 0, 1, 0.6, 1, false);
   }
-  // 灯光
+  { const [x, z] = P.memo; B.add(new THREE.CapsuleGeometry(0.28, 0.9, 4, 8), M('#4a3a30', { r: 1 }), x, 0.28, z, 0, 0.6, PI / 2); B.add(new THREE.SphereGeometry(0.22, 10, 8), M('#d8cfb8', { r: 0.9 }), x + 0.62, 0.25, z - 0.38); B.add(new THREE.PlaneGeometry(0.45, 0.6).rotateX(-PI / 2), M('#efe4c8', { ds: true }), x - 0.5, 0.03, z + 0.6, 0, 0.3, 0); B.add(new THREE.CircleGeometry(0.9, 16).rotateX(-PI / 2), M('#5a1010', { r: 1 }), x, 0.02, z); }
+  // 门（开启时石板沉入地下，木门升起）
+  const doors = {};
+  for (const [id, [x0, z0, x1, z1]] of Object.entries(DUNGEON_DOORS)) {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, y = floorY(cx, cz + 1), isRock = id === 'coral';
+    const g = new THREE.Group(); g.position.set(cx, y, cz);
+    if (isRock) { const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 0.6, 6.5, 1.4, 4, 4, 1), rockM); m.position.y = 3.2; m.castShadow = true; g.add(m); }
+    else { for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(new THREE.BoxGeometry((x1 - x0) / 6 - 0.04, 3.6, 0.25), darkWood); m.position.set(x0 - cx + (i + 0.5) * (x1 - x0) / 6, 1.8, 0); m.castShadow = true; g.add(m); } for (const yy of [0.8, 2.8]) { const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.25, 0.35), M('#3a3430', { m: 0.6 })); m.position.y = yy; g.add(m); } }
+    grp.add(g); doors[id] = { g, y, rock: isRock, open: false, t: 0, block: doorBlocks[id] };
+  }
+
+  // ---- 蛇蝎帮营地 / 海盗巢穴 ----
+  for (const [x, z] of P.crates) { const y = floorY(x, z); crate(B, x, y, z, 1.1, rand(0, 1)); crate(B, x + 1.2, y, z + 0.3, 0.8, 0.3); barrel(B, x - 0.4, y, z + 1.4); }
+  for (const [x, z] of P.tents) B.add(new THREE.ConeGeometry(2.2, 3, 4), M('#8a6a4a', { flat: true }), x, floorY(x, z) + 1.5, z, 0, PI / 4, 0);
+  // 藏宝洞的宝箱（每位冒险者各自打开一次）
+  const coffer = new THREE.Group(); { const [x, z] = P.coffer; coffer.position.set(x, 0, z); coffer.rotation.y = 0.8; const base = new THREE.Mesh(new THREE.BoxGeometry(1, 0.55, 0.65), wood); base.position.y = 0.28; coffer.add(base); const lid = new THREE.Group(); lid.position.set(0, 0.55, -0.32); const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 1, 12, 1, false, 0, PI), wood); lm.rotation.z = PI / 2; lm.position.z = 0.32; lid.add(lm); coffer.add(lid); coffer.userData.lid = lid; for (const bx of [-0.4, 0.4]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.57, 0.67), M('#e8c050', { m: 0.9, r: 0.3, e: '#5a3a00', ei: 0.4 })); b.position.set(bx, 0.28, 0); coffer.add(b); } grp.add(coffer); }
+
+  // ---- 隐秘码头：栈桥与小船 ----
+  for (let x = 24; x <= 34; x += 1.2) B.add(boxGeo(1.1, 0.15, 3.6), wood, x, -0.85, -146);
+  for (const x of [25, 29, 33]) for (const s of [-1, 1]) B.add(new THREE.CylinderGeometry(0.15, 0.18, 3, 6), darkWood, x, -1.6, -146 + s * 1.7);
+  for (const [x, z, r] of [[31, -152, 0.3], [36, -139, -0.5]]) { B.add(new THREE.SphereGeometry(1, 14, 8, 0, PI * 2, PI / 2, PI / 2), M('#6a4428', { ds: true, r: 0.9 }), x, DUNGEON_WATER_Y + 0.45, z, PI, r, 0, 1.1, 0.6, 2.6); }
+
+  // ---- 海盗船（麦迪逊船长）：船身、桅杆与帆、火炮、船长室、隐秘的开关 ----
+  {
+    const cx = -10, cz = -226, top = 2.5;
+    const hull = new THREE.CylinderGeometry(14.6, 11.5, 4.6, 48, 1, true); B.add(hull, M('#5a3a22', { map: T.wood, ds: true, r: 0.9 }), cx, top - 2.35, cz, 0, 0, 0, 1.45, 1, 1);
+    B.add(new THREE.TorusGeometry(14.6, 0.22, 6, 64), darkWood, cx, top + 0.05, cz, PI / 2, 0, 0, 1.45, 1, 1);
+    // 甲板边缘的栏杆（跳板与栈桥处留出缺口）
+    const deck = [15, 16, 17].map((i) => areas[i]);
+    for (const a of deck) for (let i = 0; i < 64; i++) {
+      const t = (i / 64) * PI * 2, x = a[1] + Math.cos(t) * (a[3] - 0.25), z = a[2] + Math.sin(t) * (a[3] - 0.25);
+      if (deck.some((b) => b !== a && areaDist(b, x, z) < -0.2) || (Math.abs(x - cx) < 2.6 && Math.abs(Math.abs(z - cz) - 13.8) < 1.5)) continue;
+      B.add(new THREE.CylinderGeometry(0.07, 0.08, 1.1, 6), darkWood, x, top + 0.55, z);
+    }
+    for (const [x, z] of P.masts) {
+      B.add(new THREE.CylinderGeometry(0.4, 0.55, 17, 10), M('#4a3020'), x, top + 8.5, z);
+      B.add(new THREE.CylinderGeometry(0.12, 0.12, 9, 6), M('#4a3020'), x, top + 10.5, z, PI / 2, 0, 0);
+      const g = new THREE.PlaneGeometry(8.5, 6.5, 6, 3); const p = g.attributes.position; for (let i = 0; i < p.count; i++) p.setZ(i, (1 - Math.pow(p.getX(i) / 4.25, 2)) * 1.1); g.computeVertexNormals();
+      B.add(g, M('#e8dcc8', { ds: true }), x + 0.4, top + 7.3, z, 0, PI / 2, 0);
+    }
+    for (const [x, z, a] of P.cannons) { B.add(new THREE.CylinderGeometry(0.32, 0.45, 2.2, 10), M('#2a2a30', { m: 0.7, r: 0.4 }), x, top + 0.75, z, PI / 2, -a + PI / 2, 0); B.add(boxGeo(1, 0.5, 1.4), darkWood, x, top + 0.25, z, 0, -a + PI / 2, 0); }
+    const [x0, z0, x1, z1] = P.cabin;
+    B.add(boxGeo(x1 - x0, 3.4, z1 - z0, 2), darkWood, (x0 + x1) / 2, top + 1.7, (z0 + z1) / 2);
+    B.add(roofGeo(z1 - z0, x1 - x0, 1.4), M('#7a2a22', { flat: true }), (x0 + x1) / 2, top + 3.4, (z0 + z1) / 2, 0, PI / 2, 0);
+    B.add(boxGeo(0.12, 2.2, 1.3), M('#2a1a10'), x1 + 0.03, top + 1.1, (z0 + z1) / 2 + 2.2);
+    // 隐秘的开关：船长室外墙上的拉杆
+    const [sx, sz] = P.switch; B.add(boxGeo(0.15, 0.7, 0.5), M('#3a3430', { m: 0.6 }), sx - 0.3, top + 1.3, sz);
+    const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6), M('#c8a050', { m: 0.8, r: 0.3, e: '#4a3000', ei: 0.4 })); lever.position.set(sx - 0.05, top + 1.45, sz); lever.rotation.z = 0.5; grp.add(lever); doors.switch.lever = lever;
+  }
+
+  // ---- 火把、封锁墙 ----
+  for (const [x, z] of DUNGEON_TORCHES) { const y = floorY(x, z); B.add(new THREE.CylinderGeometry(0.08, 0.1, 2.2, 6), M('#3a2618'), x, y + 1.1, z); B.add(new THREE.SphereGeometry(0.22, 8, 6), M('#ffd080', { e: '#ff9a30', ei: 3 }), x, y + 2.3, z, 0, 0, 0, 1, 1, 1, false); }
+  const seals = {}, sealIdx = {};
+  for (const [id, x0, z0, x1, z1] of DUNGEON_SEALS) {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, 7), new THREE.MeshBasicMaterial({ color: '#ff7a3a', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    m.position.set(cx, floorY(cx, cz) + 3.5, cz); grp.add(m); const i = sealIdx[id] = (sealIdx[id] || 0) + 1; (seals[id] = seals[id] || []).push({ m, b: sealBlocks[id][i - 1] });
+  }
+  // ---- 灯光 ----
   const lts = [];
-  for (const [x, y, z, col, i] of [[0, 6, -8, '#ffb060', 30], [0, 7, -50, '#ffb060', 40], [0, 9, -94, '#6ad0ff', 55], [0, 8, -176, '#ffb060', 55], [0, 10, -226, '#4ae0ff', 70]]) { const l = new THREE.PointLight(col, i, 40, 1.3); l.position.set(x, y, z); grp.add(l); lts.push(l); }
-  for (const [x, z] of DUNGEON_TORCHES) { B.add(new THREE.CylinderGeometry(0.08, 0.1, 2.2, 6), M('#3a2618'), x, 1.1, z); B.add(new THREE.SphereGeometry(0.22, 8, 6), M('#ffd080', { e: '#ff9a30', ei: 3 }), x, 2.3, z, 0, 0, 0, 1, 1, 1, false); }
+  for (const [x, y, z, col, i] of [[0, 7, 2, '#8ab8ff', 32], [-18, 7, -42, '#5ae0ff', 48], [-10, 7, -100, '#ffb060', 42], [10, 8, -145, '#6ad0ff', 50], [-10, 7, -192, '#ffb060', 34], [-10, 11, -226, '#ffb070', 58], [2, 11, -276, '#4ae0ff', 75]]) { const l = new THREE.PointLight(col, i, 42, 1.3); l.position.set(x, y, z); grp.add(l); lts.push(l); }
   B.build(grp);
+
+  // 调查点
+  const interacts = [
+    { id: 'memo', x: P.memo[0], z: P.memo[1], r: 3, label: '调查 血迹斑斑的笔记' },
+    ...Object.entries(P.corals).map(([c, [x, z]]) => ({ id: 'coral_' + c, x, z, r: 3.2, label: `调查 ${{ blue: '蓝', red: '红', green: '绿' }[c]}色的珊瑚` })),
+    { id: 'coffer', x: P.coffer[0], z: P.coffer[1], r: 2.8, label: '打开 宝箱' },
+    { id: 'switch', x: P.switch[0], z: P.switch[1], r: 2.8, label: '调查 隐秘的开关' },
+  ];
   return {
-    id: 'dungeon', name: '天然要害沙斯塔夏溶洞', sub: '', en: 'SASTASHA', music: 'dungeon', group: grp, walk: W, dungeon: true,
+    id: 'dungeon', name: '天然要害沙斯塔夏溶洞', sub: '', en: 'SASTASHA', music: 'dungeon', group: grp, walk: W, nav, dungeon: true,
     env: { sky: false, top: '#000', horizon: '#000', fog: ['#061218', 18, 95], hemiSky: '#7aa8c8', hemiGround: '#2a2018', hemiInt: 0.95, sunInt: 0.9, sunLight: '#9ac8e8', sunDir: [0.2, 1, 0.3], exposure: 1.15, bloom: 0.75, shadows: true },
     heightAt: (x, z) => W.height(x, z), canWalk: (x, z, r) => W.height(x, z) !== null && !W.blocked(x, z, r),
-    spawns: { start: [0, -4, PI] },
-    transitions: [], interacts: [],
+    spawns: { start: DUNGEON_SPAWN },
+    transitions: [], interacts, coffer,
     seals, setSeal(id, on) { for (const s of seals[id] || []) { s.b.on = on; s.target = on ? 0.35 : 0; } },
-    labels: [['入口', 0, -8], ['隐秘码头', 0, -94], ['海盗甲板', 0, -176], ['虎鲸之穴', 0, -222]],
-    bounds: [-40, -255, 40, 10], camMax: 13,
-    update(dt) { for (const id in seals) for (const s of seals[id]) { const t = s.target ?? 0; s.m.material.opacity += (t - s.m.material.opacity) * Math.min(1, dt * 4); s.m.visible = s.m.material.opacity > 0.01; } lts[4].intensity = 65 + Math.sin(G.time * 2) * 8; },
+    doors, setDoor(id, open, instant) { const d = doors[id]; if (!d) return; d.open = open; d.block.on = !open; if (instant) d.t = open ? 1 : 0; if (d.lever) d.lever.rotation.z = open ? -0.5 : 0.5; },
+    labels: DUNGEON_LABELS,
+    bounds: [-62, -312, 52, 30], camMax: 13,
+    update(dt) {
+      for (const id in seals) for (const s of seals[id]) { const t = s.target ?? 0; s.m.material.opacity += (t - s.m.material.opacity) * Math.min(1, dt * 4); s.m.visible = s.m.material.opacity > 0.01; }
+      for (const d of Object.values(doors)) { d.t = clamp(d.t + (d.open ? dt : -dt) / 2.2, 0, 1); const e = d.t * d.t * (3 - 2 * d.t); d.g.position.y = d.y + (d.rock ? -7 : 4.2) * e; d.g.visible = d.t < 0.999 || !d.rock; }
+      lts[6].intensity = 70 + Math.sin(G.time * 2) * 8;
+    },
   };
 }
 

@@ -326,11 +326,22 @@ export const UI = {
       c.putImageData(img, 0, 0);
     } else {
       c.fillStyle = zone.dungeon ? '#0e1418' : '#2a5a7a'; c.fillRect(0, 0, W, H);
-      c.fillStyle = zone.dungeon ? '#5a5244' : '#d8cba8'; c.strokeStyle = zone.dungeon ? '#2a2620' : '#8a7a5a'; c.lineWidth = 2;
-      for (const a of zone.walk.a) { c.beginPath(); if (a.t === 'c') c.arc(tx(a.x), tz(a.z), a.r * k, 0, 7); else c.rect(tx(a.x0), tz(a.z0), (a.x1 - a.x0) * k, (a.z1 - a.z0) * k); c.fill(); c.stroke(); }
-      for (const a of zone.walk.a) { c.beginPath(); if (a.t === 'c') c.arc(tx(a.x), tz(a.z), a.r * k, 0, 7); else c.rect(tx(a.x0), tz(a.z0), (a.x1 - a.x0) * k, (a.z1 - a.z0) * k); c.fill(); }
+      // 水面
+      c.fillStyle = '#123a4a';
+      for (const w of zone.walk.water || []) { c.beginPath(); c.arc(tx(w[1]), tz(w[2]), w[3] * k, 0, 7); c.fill(); }
+      // 可行走区域：先画描边再填充，相邻区域连成一片；通道用粗线画出
+      const shape = (a, pad) => {
+        c.beginPath();
+        if (a.t === 'c') { c.arc(tx(a.x), tz(a.z), a.r * k + pad, 0, 7); c.fill(); }
+        else if (a.t === 's') { c.lineCap = 'round'; c.lineWidth = Math.sqrt(a.hw2) * 2 * k + pad * 2; c.moveTo(tx(a.x0), tz(a.z0)); c.lineTo(tx(a.x1), tz(a.z1)); c.stroke(); }
+        else { c.rect(tx(a.x0) - pad, tz(a.z0) - pad, (a.x1 - a.x0) * k + pad * 2, (a.z1 - a.z0) * k + pad * 2); c.fill(); }
+      };
+      c.fillStyle = c.strokeStyle = zone.dungeon ? '#2a2620' : '#8a7a5a';
+      for (const a of zone.walk.a) shape(a, 2);
+      c.fillStyle = c.strokeStyle = zone.dungeon ? '#5a5244' : '#d8cba8';
+      for (const a of zone.walk.a) shape(a, 0);
       c.fillStyle = zone.dungeon ? '#2a2620' : '#9a8a6a';
-      for (const b of zone.walk.blk) if (b.t === 'b' && b.on) c.fillRect(tx(b.x0), tz(b.z0), (b.x1 - b.x0) * k, (b.z1 - b.z0) * k);
+      for (const b of zone.walk.blk) if (b.t === 'b' && b.on && !b.dyn) c.fillRect(tx(b.x0), tz(b.z0), (b.x1 - b.x0) * k, (b.z1 - b.z0) * k);
     }
     zone.mapImg = cv; zone.mapK = k;
   },
